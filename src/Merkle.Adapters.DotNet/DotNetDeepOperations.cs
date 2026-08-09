@@ -69,7 +69,7 @@ public sealed class DotNetDeepOperations(IProcessRunner runner, string observerA
         var warnings = new List<string>();
         foreach (var project in projects)
         {
-            var result = await RunAsync(workspace.Root, ["test", project, "--list-tests", "--no-build", "--configuration", context.Configuration, "--nologo"], null, cancellationToken).ConfigureAwait(false);
+            var result = await RunAsync(workspace.Root, ["test", project, "--list-tests", "--no-build", "--configuration", context.Configuration, "-p:CollectCoverage=false", "--nologo"], null, cancellationToken).ConfigureAwait(false);
             if (result.ExitCode != 0)
             {
                 warnings.Add($"{project}: test discovery failed: {Diagnostic(result)}");
@@ -80,7 +80,7 @@ public sealed class DotNetDeepOperations(IProcessRunner runner, string observerA
             {
                 var (Identity, RunnerOnly) = NormalizeRunnerIdentity(project, name);
                 if (RunnerOnly) warnings.Add($"{project}: runner identity '{name}' could not be matched to a static test case.");
-                tests.Add(new TestCatalogEntry(Identity, name, DetectFramework(name), project, name));
+                tests.Add(new TestCatalogEntry(Identity, name, DetectFramework(name), project, FullyQualifiedName(name)));
             }
         }
 
@@ -99,6 +99,67 @@ public sealed class DotNetDeepOperations(IProcessRunner runner, string observerA
         }
 
         return results;
+    }
+
+    public SelectedTestResolution ResolveSelectedTests(
+        IReadOnlyList<SelectedTestReference> selectedTests,
+        IReadOnlyList<TestCatalogEntry> catalog)
+    {
+        ArgumentNullException.ThrowIfNull(selectedTests);
+        ArgumentNullException.ThrowIfNull(catalog);
+        var result = new Dictionary<string, TestCatalogEntry>(StringComparer.Ordinal);
+        var unresolved = new List<SelectedTestReference>();
+        foreach (var selected in selectedTests)
+        {
+            var exact = catalog.FirstOrDefault(test => test.Identity == selected.Identity);
+            if (exact is not null)
+            {
+                result[exact.Identity] = exact;
+                continue;
+            }
+
+            var project = ProjectFromIdentity(selected.Identity);
+            if (selected.Identity.StartsWith("dotnet-project:", StringComparison.Ordinal))
+            {
+                var projectTests = catalog.Where(test => test.ProjectPath == project).ToArray();
+                if (projectTests.Length == 0)
+                {
+                    unresolved.Add(selected);
+                    continue;
+                }
+                foreach (var test in projectTests) result[test.Identity] = test;
+                continue;
+            }
+
+            if (project is null)
+            {
+                unresolved.Add(selected);
+                continue;
+            }
+            var selector = StaticSelector(selected.Identity, project) ?? DisplaySelector(selected.DisplayName);
+            var discovered = catalog
+                .Where(test =>
+                    StringComparer.Ordinal.Equals(test.ProjectPath, project) &&
+                    StringComparer.Ordinal.Equals(test.Selector, selector))
+                .OrderBy(test => test.Identity, StringComparer.Ordinal)
+                .FirstOrDefault();
+            if (discovered is not null)
+            {
+                result[selected.Identity] = discovered with
+                {
+                    Identity = selected.Identity,
+                    DisplayName = selected.DisplayName
+                };
+            }
+            else
+            {
+                unresolved.Add(selected);
+            }
+        }
+
+        return new SelectedTestResolution(
+            [.. result.Values.OrderBy(test => test.Identity, StringComparer.Ordinal)],
+            [.. unresolved.OrderBy(test => test.Identity, StringComparer.Ordinal)]);
     }
 
     public async ValueTask<IReadOnlyList<ObservationScope>> ObserveAsync(ObservationRequest request, CancellationToken cancellationToken)
@@ -147,11 +208,13 @@ public sealed class DotNetDeepOperations(IProcessRunner runner, string observerA
         using var linked = deadline is null ? null : CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, deadline.Token);
         try
         {
-            var result = await RunAsync(root, ["test", test.ProjectPath, "--no-build", "--configuration", context.Configuration, "--filter", $"FullyQualifiedName={test.Selector}", "--logger", $"trx;LogFileName={trxName}", "--results-directory", resultsDirectory, "--nologo"], environment, linked?.Token ?? cancellationToken).ConfigureAwait(false);
+            var result = await RunAsync(root, ["test", test.ProjectPath, "--no-build", "--configuration", context.Configuration, "-p:CollectCoverage=false", "--filter", $"FullyQualifiedName={test.Selector}", "--logger", $"trx;LogFileName={trxName}", "--results-directory", resultsDirectory, "--nologo"], environment, linked?.Token ?? cancellationToken).ConfigureAwait(false);
             var trx = Directory.EnumerateFiles(resultsDirectory, "*.trx", SearchOption.AllDirectories).OrderBy(path => path, StringComparer.Ordinal).FirstOrDefault();
             var parsed = trx is null ? null : ParseTrx(trx, test.Identity);
             if (parsed is not null) return parsed;
-            return new TestExecutionResult(test.Identity, result.ExitCode == 0 ? TestOutcome.Passed : TestOutcome.Crashed, null, Diagnostic(result));
+            throw new AnalysisException(
+                "TestResultUnavailable",
+                $"dotnet test did not produce a result for selected test '{test.Identity}': {Diagnostic(result)}");
         }
         catch (OperationCanceledException) when (deadline?.IsCancellationRequested == true && !cancellationToken.IsCancellationRequested)
         {
@@ -188,7 +251,17 @@ public sealed class DotNetDeepOperations(IProcessRunner runner, string observerA
     }
 
     private ValueTask<ProcessResult> RunAsync(string root, IReadOnlyList<string> arguments, IReadOnlyDictionary<string, string?>? environment, CancellationToken cancellationToken) =>
-        _runner.RunAsync(new ProcessRequest(_dotnetPath, arguments, root, environment, MaxStandardOutputBytes: 4 * 1024 * 1024, MaxStandardErrorBytes: DiagnosticLimit), cancellationToken);
+        _runner.RunAsync(new ProcessRequest(_dotnetPath, arguments, root, StableToolEnvironment(environment), MaxStandardOutputBytes: 4 * 1024 * 1024, MaxStandardErrorBytes: DiagnosticLimit), cancellationToken);
+
+    private static IReadOnlyDictionary<string, string?> StableToolEnvironment(IReadOnlyDictionary<string, string?>? environment)
+    {
+        var result = environment is null
+            ? new Dictionary<string, string?>(StringComparer.Ordinal)
+            : new Dictionary<string, string?>(environment, StringComparer.Ordinal);
+        result["DOTNET_CLI_UI_LANGUAGE"] = "en-US";
+        result["VSLANG"] = "1033";
+        return result;
+    }
 
     private static List<DynamicObservation> ToObservations(string testIdentity, IReadOnlyList<string> loaded, BuildFingerprint fingerprint, string runId)
     {
@@ -227,19 +300,34 @@ public sealed class DotNetDeepOperations(IProcessRunner runner, string observerA
     private static TestExecutionResult? ParseTrx(string path, string identity)
     {
         var document = XDocument.Load(path, LoadOptions.None);
-        var result = document.Descendants().FirstOrDefault(element => element.Name.LocalName == "UnitTestResult");
-        if (result is null) return null;
-        var value = ((string?)result.Attribute("outcome") ?? "Failed").ToLowerInvariant();
-        var outcome = value switch { "passed" => TestOutcome.Passed, "failed" => TestOutcome.Failed, "notexecuted" or "inconclusive" => TestOutcome.Skipped, "timeout" => TestOutcome.TimedOut, "aborted" => TestOutcome.Cancelled, _ => TestOutcome.Crashed };
-        TimeSpan? duration = TimeSpan.TryParse(
-            (string?)result.Attribute("duration"),
-            CultureInfo.InvariantCulture,
-            out var parsed)
-            ? parsed
-            : null;
-        var diagnostic = string.Join("\n", result.Descendants().Where(element => element.Name.LocalName is "Message" or "StackTrace").Select(element => element.Value)).Trim();
+        var results = document.Descendants().Where(element => element.Name.LocalName == "UnitTestResult").ToArray();
+        if (results.Length == 0) return null;
+        var outcomes = results.Select(result => ParseOutcome((string?)result.Attribute("outcome"))).ToArray();
+        var outcome = outcomes.Contains(TestOutcome.Crashed) ? TestOutcome.Crashed
+            : outcomes.Contains(TestOutcome.TimedOut) ? TestOutcome.TimedOut
+            : outcomes.Contains(TestOutcome.Cancelled) ? TestOutcome.Cancelled
+            : outcomes.Contains(TestOutcome.Failed) ? TestOutcome.Failed
+            : outcomes.Contains(TestOutcome.Passed) ? TestOutcome.Passed
+            : TestOutcome.Skipped;
+        var durations = results
+            .Select(result => TimeSpan.TryParse((string?)result.Attribute("duration"), CultureInfo.InvariantCulture, out var parsed) ? parsed : (TimeSpan?)null)
+            .Where(duration => duration.HasValue)
+            .Select(duration => duration!.Value)
+            .ToArray();
+        TimeSpan? duration = durations.Length == 0 ? null : TimeSpan.FromTicks(durations.Sum(value => value.Ticks));
+        var diagnostic = string.Join("\n", results.SelectMany(result => result.Descendants()).Where(element => element.Name.LocalName is "Message" or "StackTrace").Select(element => element.Value)).Trim();
         return new TestExecutionResult(identity, outcome, duration, diagnostic.Length == 0 ? null : diagnostic[..Math.Min(diagnostic.Length, DiagnosticLimit)]);
     }
+
+    private static TestOutcome ParseOutcome(string? outcome) => outcome?.ToLowerInvariant() switch
+    {
+        "passed" => TestOutcome.Passed,
+        "failed" => TestOutcome.Failed,
+        "notexecuted" or "inconclusive" => TestOutcome.Skipped,
+        "timeout" => TestOutcome.TimedOut,
+        "aborted" => TestOutcome.Cancelled,
+        _ => TestOutcome.Crashed
+    };
 
     private static IReadOnlyList<string> ParseListedTests(string stdout)
     {
@@ -251,7 +339,7 @@ public sealed class DotNetDeepOperations(IProcessRunner runner, string observerA
 
     private static (string Identity, bool RunnerOnly) NormalizeRunnerIdentity(string project, string runner)
     {
-        var method = runner.Split('(', 2)[0];
+        var method = FullyQualifiedName(runner);
         var lastDot = method.LastIndexOf('.');
         if (lastDot > 0 && !runner.Contains('(', StringComparison.Ordinal))
         {
@@ -260,6 +348,64 @@ public sealed class DotNetDeepOperations(IProcessRunner runner, string observerA
             return ($"dotnet:test:v1:{project}:dotnet:type:{project}:{type}:{name}():method", false);
         }
         return ($"dotnet:runner-test:v1:{project}:{Hash(Encoding.UTF8.GetBytes(runner))[..24]}", true);
+    }
+
+    private static string FullyQualifiedName(string runnerIdentity)
+    {
+        var open = runnerIdentity.IndexOf('(');
+        return (open < 0 ? runnerIdentity : runnerIdentity[..open]).Trim();
+    }
+
+    private static string? ProjectFromIdentity(string identity)
+    {
+        const string projectPrefix = "dotnet-project:";
+        if (identity.StartsWith(projectPrefix, StringComparison.Ordinal)) return identity[projectPrefix.Length..];
+        const string testPrefix = "dotnet:test:v1:";
+        const string delimiter = ":dotnet:type:";
+        if (!identity.StartsWith(testPrefix, StringComparison.Ordinal)) return null;
+        var end = identity.IndexOf(delimiter, testPrefix.Length, StringComparison.Ordinal);
+        return end < 0 ? null : identity[testPrefix.Length..end];
+    }
+
+    private static string DisplaySelector(string displayName)
+    {
+        var open = displayName.LastIndexOf('(');
+        return open > 0 ? displayName[..open] : displayName;
+    }
+
+    private static string? StaticSelector(string identity, string project)
+    {
+        var prefix = $"dotnet:test:v1:{project}:dotnet:type:{project}:";
+        if (!identity.StartsWith(prefix, StringComparison.Ordinal)) return null;
+        var typeAndMember = identity[prefix.Length..];
+        var memberSeparator = typeAndMember.IndexOf(':');
+        if (memberSeparator <= 0) return null;
+        var discriminator = typeAndMember.LastIndexOf(':');
+        if (discriminator <= memberSeparator) return null;
+        var signature = typeAndMember[(memberSeparator + 1)..discriminator];
+        var parameters = signature.IndexOf('(');
+        if (parameters <= 0) return null;
+        var type = WithoutMetadataArity(typeAndMember[..memberSeparator]);
+        var method = WithoutMetadataArity(signature[..parameters]);
+        return $"{type}.{method}";
+    }
+
+    private static string WithoutMetadataArity(string value)
+    {
+        var buffer = new char[value.Length];
+        var length = 0;
+        for (var index = 0; index < value.Length; index++)
+        {
+            if (value[index] == '`' && index + 1 < value.Length && char.IsAsciiDigit(value[index + 1]))
+            {
+                while (index + 1 < value.Length && char.IsAsciiDigit(value[index + 1])) index++;
+                continue;
+            }
+
+            buffer[length++] = value[index];
+        }
+
+        return new string(buffer, 0, length);
     }
 
     private static string DetectFramework(string name) => name.Contains('[', StringComparison.Ordinal) ? "runner" : "dotnet";

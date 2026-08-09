@@ -6,11 +6,40 @@ using Merkle.Core.Adapters;
 using Merkle.Core.Domain;
 using Merkle.Core.Errors;
 using Merkle.Core.Processes;
+using Merkle.Infrastructure.Processes;
 
 namespace Merkle.Tests.Adapters;
 
 public sealed class DotNetProcessAnalysisWorkerTests
 {
+    [Fact]
+    public async Task Analyze_PreservesDecodedTextInBomPrefixedProjectThroughWorkerProcess()
+    {
+        var projectXml = Encoding.UTF8.GetBytes("<?xml version=\"1.0\" encoding=\"iso-8859-1\"?><Project Sdk=\"Microsoft.NET.Sdk\"><ItemGroup><ProjectReference Include=\"../Bibliotéca/Bibliotéca.csproj\" /></ItemGroup></Project>");
+        var projectWithBom = Encoding.UTF8.GetPreamble().Concat(projectXml).ToArray();
+        var snapshot = Snapshot(
+            ("Merkle.sln", Encoding.UTF8.GetBytes("Project(\"{00000000-0000-0000-0000-000000000000}\") = \"App\", \"src/App/App.csproj\", \"{00000000-0000-0000-0000-000000000001}\"\nEndProject")),
+            ("src/App/App.csproj", projectWithBom),
+            ("src/Bibliotéca/Bibliotéca.csproj", Encoding.UTF8.GetBytes("<Project Sdk=\"Microsoft.NET.Sdk\" />")));
+
+        var index = await ProcessWorker().AnalyzeAsync(new AdapterIndexRequest(snapshot, "Merkle.sln"), default);
+
+        Assert.Contains(index.Units, unit => unit.Identity == "dotnet:project:src/Bibliotéca/Bibliotéca.csproj");
+    }
+
+    [Fact]
+    public async Task Analyze_StillRejectsMalformedProjectThroughWorkerProcess()
+    {
+        var snapshot = Snapshot(
+            ("Merkle.sln", Encoding.UTF8.GetBytes("Project(\"{00000000-0000-0000-0000-000000000000}\") = \"App\", \"src/App/App.csproj\", \"{00000000-0000-0000-0000-000000000001}\"\nEndProject")),
+            ("src/App/App.csproj", Encoding.UTF8.GetBytes("<Project>")));
+
+        var error = await Assert.ThrowsAsync<AnalysisException>(() =>
+            ProcessWorker().AnalyzeAsync(new AdapterIndexRequest(snapshot, "Merkle.sln"), default).AsTask());
+
+        Assert.Equal("InvalidProjectFile", error.Code);
+    }
+
     [Fact]
     public async Task Analyze_SendsBoundedProtocolRequestAndReturnsWorkerFragment()
     {
@@ -89,6 +118,37 @@ public sealed class DotNetProcessAnalysisWorkerTests
     private static RepositorySnapshot Snapshot(params (string Path, string Content)[] files) => new(
         new SnapshotIdentity("id", "HEAD", "git"), "/repo", "repository",
         [.. files.Select(file => new SnapshotFile(file.Path, Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(file.Content))), Encoding.UTF8.GetBytes(file.Content)))]);
+
+    private static RepositorySnapshot Snapshot(params (string Path, byte[] Content)[] files) => new(
+        new SnapshotIdentity("id", "HEAD", "git"), FindRepositoryRoot(), "repository",
+        [.. files.Select(file => new SnapshotFile(file.Path, Convert.ToHexString(SHA256.HashData(file.Content)), file.Content))]);
+
+    private static DotNetProcessAnalysisWorker ProcessWorker()
+    {
+        var repositoryRoot = FindRepositoryRoot();
+        var testOutput = new DirectoryInfo(AppContext.BaseDirectory);
+        var configuration = testOutput.Parent!.Name;
+        var workerAssembly = Path.Combine(
+            repositoryRoot,
+            "src",
+            "Merkle.Adapters.DotNet.Worker",
+            "bin",
+            configuration,
+            testOutput.Name,
+            "Merkle.Adapters.DotNet.Worker.dll");
+        return new DotNetProcessAnalysisWorker(new ProcessRunner(), workerAssembly);
+    }
+
+    private static string FindRepositoryRoot()
+    {
+        var directory = new DirectoryInfo(AppContext.BaseDirectory);
+        while (directory is not null && !File.Exists(Path.Combine(directory.FullName, "Merkle.slnx")))
+        {
+            directory = directory.Parent;
+        }
+
+        return directory?.FullName ?? throw new DirectoryNotFoundException("Could not find the Merkle repository root.");
+    }
 
     private sealed class FakeRunner(Func<ProcessRequest, ProcessResult> handler) : IProcessRunner
     {

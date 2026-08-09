@@ -33,6 +33,7 @@ public sealed class RemoteBackedStateStore(
         CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(publication);
+        local.ValidatePublication(publication);
         foreach (var group in publication.PersistedHistoryRuns.GroupBy(run => run.Compatibility))
         {
             var records = group.Select((run, index) => new RemoteHistoricalRun(

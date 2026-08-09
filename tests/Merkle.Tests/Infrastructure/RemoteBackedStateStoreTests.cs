@@ -141,6 +141,37 @@ public sealed class RemoteBackedStateStoreTests
     }
 
     [Fact]
+    public async Task Publish_RejectsSchemaLessFailureEvidenceBeforeContactingRemote()
+    {
+        using var directory = new TemporaryDirectory();
+        var local = new LocalStateStore(directory.Path, ".merkle", "repo");
+        var initialJournal = await local.BeginRunAsync("run-1", default);
+        await local.PublishAsync(initialJournal, Report("run-1"), default);
+        var remote = new RecordingRemote(Page("v1", null));
+        var store = new RemoteBackedStateStore(local, remote);
+        var attemptedJournal = await store.BeginRunAsync("run-2", default);
+        var failure = Report("run-2") with
+        {
+            TerminalStatus = TerminalStatus.Failed,
+            ErrorClass = ErrorClass.AnalysisError,
+            ErrorCode = "OriginalFailure",
+            IdentitySchemas = []
+        };
+
+        var error = await Assert.ThrowsAsync<AnalysisException>(async () =>
+            await ((IStatePublicationStore)store).PublishAsync(
+                attemptedJournal,
+                new StatePublication(failure, HistoryRuns: [Run("attempted")]),
+                default));
+
+        Assert.Equal("IncompleteEvidence", error.Code);
+        Assert.Empty(remote.Reads);
+        Assert.Empty(remote.Publications);
+        Assert.Equal("run-1", (await local.ReadCurrentAsync(default))?.RunId);
+        Assert.Empty(await ((IHistoryStore)local).ReadHistoryAsync(Key(), default));
+    }
+
+    [Fact]
     public async Task EnvironmentTokenSource_ReadsConfiguredValueAndHonorsCancellation()
     {
         var name = "MERKLE_REMOTE_TOKEN_TEST_" + Guid.NewGuid().ToString("N");

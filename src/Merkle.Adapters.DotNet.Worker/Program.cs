@@ -250,7 +250,8 @@ internal static class SemanticIndexBuilder
     {
         try
         {
-            var document = XDocument.Parse(file.Content, LoadOptions.None);
+            var content = file.Content.Length > 0 && file.Content[0] == '\uFEFF' ? file.Content[1..] : file.Content;
+            var document = XDocument.Parse(content, LoadOptions.None);
             var isTest = document.Descendants().Where(element => element.Name.LocalName == "IsTestProject").Any(element => bool.TryParse(element.Value.Trim(), out var value) && value) ||
                          document.Descendants().Where(element => element.Name.LocalName == "PackageReference").Select(element => (string?)element.Attribute("Include") ?? (string?)element.Attribute("Update")).Any(IsTestPackage);
             var references = document.Descendants().Where(element => element.Name.LocalName == "ProjectReference").Select(element => (string?)element.Attribute("Include")).Where(path => !string.IsNullOrWhiteSpace(path)).Select(path => ResolveRelative(file.Path, path!)).Distinct(StringComparer.Ordinal).OrderBy(path => path, StringComparer.Ordinal).ToArray();

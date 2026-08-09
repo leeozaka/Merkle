@@ -7,7 +7,7 @@ using Merkle.Core.Indexing;
 
 namespace Merkle.Adapters.DotNet;
 
-public sealed class DotNetAdapter(IDotNetAnalysisWorker? analysisWorker = null, DotNetDeepOperations? deepOperations = null) : ILanguageAdapter, IBuildPreparer, ITestDiscoverer, ISelectedTestExecutor, ITestObserver
+public sealed class DotNetAdapter(IDotNetAnalysisWorker? analysisWorker = null, DotNetDeepOperations? deepOperations = null) : ILanguageAdapter, IBuildPreparer, ITestDiscoverer, ISelectedTestResolver, ISelectedTestExecutor, ITestObserver
 {
     private static readonly string[] SolutionExtensions = [".sln", ".slnx"];
     private static readonly string[] ProjectExtensions = [".csproj", ".fsproj", ".vbproj"];
@@ -95,6 +95,11 @@ public sealed class DotNetAdapter(IDotNetAnalysisWorker? analysisWorker = null, 
 
     public ValueTask<IReadOnlyList<TestExecutionResult>> ExecuteAsync(SelectedExecutionRequest request, CancellationToken cancellationToken) =>
         Deep().ExecuteAsync(request, cancellationToken);
+
+    public SelectedTestResolution ResolveSelectedTests(
+        IReadOnlyList<SelectedTestReference> selectedTests,
+        IReadOnlyList<TestCatalogEntry> catalog) =>
+        Deep().ResolveSelectedTests(selectedTests, catalog);
 
     public ValueTask<IReadOnlyList<ObservationScope>> ObserveAsync(ObservationRequest request, CancellationToken cancellationToken) =>
         Deep().ObserveAsync(request, cancellationToken);

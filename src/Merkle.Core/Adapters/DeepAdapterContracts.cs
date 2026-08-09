@@ -39,6 +39,12 @@ public sealed record TestCatalogEntry(
 
 public sealed record DiscoveryCatalog(BuildFingerprint Fingerprint, IReadOnlyList<TestCatalogEntry> Tests, IReadOnlyList<string> Warnings);
 
+public sealed record SelectedTestReference(string Identity, string DisplayName);
+
+public sealed record SelectedTestResolution(
+    IReadOnlyList<TestCatalogEntry> Tests,
+    IReadOnlyList<SelectedTestReference> UnresolvedTests);
+
 public enum TestOutcome
 {
     Passed,
@@ -104,6 +110,13 @@ public interface ITestDiscoverer
 public interface ISelectedTestExecutor
 {
     ValueTask<IReadOnlyList<TestExecutionResult>> ExecuteAsync(SelectedExecutionRequest request, CancellationToken cancellationToken);
+}
+
+public interface ISelectedTestResolver
+{
+    SelectedTestResolution ResolveSelectedTests(
+        IReadOnlyList<SelectedTestReference> selectedTests,
+        IReadOnlyList<TestCatalogEntry> catalog);
 }
 
 public interface ITestObserver

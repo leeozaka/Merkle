@@ -2,9 +2,9 @@
 
 Merkle is a self-hosted test-impact assistant. It compares a baseline repository snapshot with a candidate snapshot, identifies changed source units, traces their likely impact, and returns an explainable list of relevant tests.
 
-**Status:** Roadmap phases 0–5 are implemented behind versioned seams. The C#/.NET 10 Native AOT CLI supports planning, serial .NET observation, policy-gated selected execution, local/remote history, and transactional state. Runtime observation is intentionally coarse: the startup hook records assembly/project evidence and reports its member/reflection/native/child-process blind spots.
+**Status:** Roadmap phases 0–5 are implemented behind versioned seams. The C#/.NET 10 CLI supports planning, serial .NET observation, policy-gated selected execution, local/remote history, and transactional state. Runtime observation is intentionally coarse: the startup hook records assembly/project evidence and reports its member/reflection/native/child-process blind spots.
 
-The designed RFC is available as [Word](Merkle-Test-Impact-System-Design.docx) and [PDF](Merkle-Test-Impact-System-Design.pdf). Those rendered artifacts predate ADR-0015; the Markdown specification and ADRs are authoritative for the .NET 10/Native AOT decision. See the [QA report](QA-REPORT.md) for render, accessibility, privacy, and package checks.
+The designed RFC is available as [Word](Merkle-Test-Impact-System-Design.docx) and [PDF](Merkle-Test-Impact-System-Design.pdf). Those rendered artifacts predate ADR-0015; the Markdown specification and ADRs are authoritative for the .NET 10 decision. See the [QA report](QA-REPORT.md) for render, accessibility, privacy, and package checks.
 
 ## Why this exists
 
@@ -186,5 +186,3 @@ Copyable files are included in [`examples/merkle.yml`](examples/merkle.yml) and 
 ## Build and release
 
 The Native AOT CLI keeps Roslyn and test-platform work in companion managed processes. CI builds and tests on macOS and Linux, enforces 80% aggregate line and branch coverage, publishes self-contained artifacts for x64 and Arm64, and attaches signed GitHub build-provenance attestations. Analyzed repositories receive no package or project changes.
-
-The 2026-08-07 verification run passed 289 Release tests with 92.80% line and 81.59% branch coverage. The macOS Arm64 Native AOT package launched successfully, initialized SQLite schema 2, and contained the managed semantic worker and startup-hook observer at their resolved package paths.

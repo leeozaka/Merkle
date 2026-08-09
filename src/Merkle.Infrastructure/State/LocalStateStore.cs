@@ -2,6 +2,7 @@ using System.Globalization;
 using System.Text;
 using System.Text.Json;
 using Merkle.Core.Adapters;
+using Merkle.Core.Domain;
 using Merkle.Core.Errors;
 using Merkle.Core.History;
 using Merkle.Core.Reporting;
@@ -314,18 +315,25 @@ public sealed class LocalStateStore : IStateStore, IStatePublicationStore, IInde
 
     private static void Add(SqliteCommand command, string name, object? value) => command.Parameters.AddWithValue(name, value ?? DBNull.Value);
 
-    private void ValidatePublication(StatePublication publication)
+    internal void ValidatePublication(StatePublication publication)
     {
+        ArgumentNullException.ThrowIfNull(publication);
+        ArgumentNullException.ThrowIfNull(publication.TerminalReport);
         if (!IsCompatible(publication.TerminalReport) || publication.TerminalReport.TerminalStatus == Merkle.Core.Domain.TerminalStatus.Interrupted)
         {
             throw new AnalysisException("IncompleteEvidence", "Only a compatible, completed terminal report can be published.");
+        }
+        if (publication.TerminalReport.IdentitySchemas.Count == 0 &&
+            (publication.PersistedIndexes.Count > 0 || publication.PersistedHistoryRuns.Count > 0))
+        {
+            throw new AnalysisException("IncompleteEvidence", "A terminal report without negotiated identity schemas cannot publish indexes or history.");
         }
         if (publication.PersistedIndexes.Count > MaxEvidenceEntries || publication.PersistedHistoryRuns.Count > MaxEvidenceEntries) throw new AnalysisException("EvidenceLimitExceeded", "The publication contains too many evidence records.");
         foreach (var item in publication.PersistedIndexes)
         {
             ArgumentNullException.ThrowIfNull(item); ArgumentNullException.ThrowIfNull(item.Compatibility); ArgumentNullException.ThrowIfNull(item.Index);
             ValidateIndexKey(item.Compatibility);
-            if (item.Index.Units is null || item.Index.Edges is null || item.Index.Tests is null || item.Index.Units.Count > MaxEvidenceEntries || item.Index.Edges.Count > MaxEvidenceEntries || item.Index.Tests.Count > MaxEvidenceEntries || item.Index.Units.Any(unit => !IsBounded(unit.Identity) || !IsBounded(unit.Path) || !IsBounded(unit.ContentHash) || !IsBounded(unit.SemanticSignature)) || item.Index.Tests.Any(test => !IsBounded(test.Identity) || !IsBounded(test.DisplayName) || !IsBounded(test.Framework)) || item.Index.Edges.Any(edge => !IsBounded(edge.SourceIdentity) || !IsBounded(edge.TargetIdentity))) throw new AnalysisException("IncompleteEvidence", "An adapter index is structurally incomplete or exceeds store limits.");
+            if (item.Index.Units is null || item.Index.Edges is null || item.Index.Tests is null || item.Index.Units.Count > MaxEvidenceEntries || item.Index.Edges.Count > MaxEvidenceEntries || item.Index.Tests.Count > MaxEvidenceEntries || item.Index.Units.Any(unit => !IsBounded(unit.Identity) || !IsBounded(unit.Path) || !IsBounded(unit.ContentHash) || !IsValidSemanticSignature(unit.Kind, unit.SemanticSignature)) || item.Index.Tests.Any(test => !IsBounded(test.Identity) || !IsBounded(test.DisplayName) || !IsBounded(test.Framework)) || item.Index.Edges.Any(edge => !IsBounded(edge.SourceIdentity) || !IsBounded(edge.TargetIdentity))) throw new AnalysisException("IncompleteEvidence", "An adapter index is structurally incomplete or exceeds store limits.");
         }
 
         foreach (var history in publication.PersistedHistoryRuns)
@@ -345,7 +353,21 @@ public sealed class LocalStateStore : IStateStore, IStatePublicationStore, IInde
         if (!IsBounded(key.RepositoryIdentity) || !IsBounded(key.SchemaVersion) || !IsBounded(key.AdapterIdentity) || !IsBounded(key.BuildFingerprintFamily)) throw new ConfigurationException("InvalidCompatibilityKey", "The history compatibility key is incomplete or too large.");
     }
 
-    private bool IsCompatible(TerminalReport report) => report.SchemaVersion == 1 && StringComparer.Ordinal.Equals(report.RepositoryIdentity, _repositoryIdentity) && report.IndexSchema == Merkle.Core.Indexing.MerkleIndex.SchemaVersion && report.IdentitySchemas.Contains("unit:1", StringComparer.Ordinal) && report.IdentitySchemas.Contains("test:1", StringComparer.Ordinal) && report.Adapters.All(adapter => StringComparer.Ordinal.Equals(adapter.ProtocolVersion, "1.0") && StringComparer.Ordinal.Equals(adapter.UnitIdentityVersion, "1") && StringComparer.Ordinal.Equals(adapter.TestIdentityVersion, "1"));
+    private bool IsCompatible(TerminalReport report) =>
+        report.SchemaVersion == 1 &&
+        StringComparer.Ordinal.Equals(report.RepositoryIdentity, _repositoryIdentity) &&
+        report.IndexSchema == Merkle.Core.Indexing.MerkleIndex.SchemaVersion &&
+        HasCompatibleIdentitySchemas(report) &&
+        report.Adapters.All(adapter =>
+            StringComparer.Ordinal.Equals(adapter.ProtocolVersion, "1.0") &&
+            StringComparer.Ordinal.Equals(adapter.UnitIdentityVersion, "1") &&
+            StringComparer.Ordinal.Equals(adapter.TestIdentityVersion, "1"));
+
+    private static bool HasCompatibleIdentitySchemas(TerminalReport report) =>
+        report.IdentitySchemas.Count == 0
+            ? report.TerminalStatus is Merkle.Core.Domain.TerminalStatus.Failed or Merkle.Core.Domain.TerminalStatus.PolicyFailed
+            : report.IdentitySchemas.Contains("unit:1", StringComparer.Ordinal) &&
+              report.IdentitySchemas.Contains("test:1", StringComparer.Ordinal);
 
     private void ValidateStatePath()
     {
@@ -404,6 +426,16 @@ public sealed class LocalStateStore : IStateStore, IStatePublicationStore, IInde
     }
 
     private static bool IsBounded(string? value) => !string.IsNullOrWhiteSpace(value) && value.Length <= MaxIdentifierLength;
+
+    private static bool IsOptionalBounded(string? value) =>
+        value is not null &&
+        value.Length <= MaxIdentifierLength &&
+        (value.Length == 0 || !string.IsNullOrWhiteSpace(value));
+
+    private static bool IsValidSemanticSignature(SourceUnitKind kind, string? value) =>
+        kind is SourceUnitKind.Project or SourceUnitKind.File
+            ? IsOptionalBounded(value)
+            : IsBounded(value);
 
     private static void ValidateRunId(string runId)
     {

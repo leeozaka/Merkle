@@ -1,3 +1,5 @@
+using System.Text;
+using Merkle.Adapters.DotNet;
 using Merkle.Core.Domain;
 using Merkle.Core.Errors;
 using Merkle.Core.Adapters;
@@ -245,6 +247,202 @@ public sealed class LocalStateStoreTests
         Assert.Equal(HistoryProvenance.Local, Assert.Single(histories).Provenance);
         var status = await store.GetStatusAsync(default);
         Assert.False(status.RebuildRequired);
+    }
+
+    [Fact]
+    public async Task Publish_RoundTripsGeneratedDotNetIndexWithEmptyProjectSemanticSignature()
+    {
+        using var directory = new TemporaryDirectory();
+        var store = new LocalStateStore(directory.Path, ".merkle", "repo-1");
+        var journal = await store.BeginRunAsync("run-1", default);
+        var key = new IndexCompatibilityKey("repo-1", "head", 1, "sha256:1", "semantic:1", "dotnet", "1.0", "1", "1", "dotnet", "build:1");
+        var snapshot = new RepositorySnapshot(
+            new SnapshotIdentity("head", "HEAD", "git"),
+            directory.Path,
+            "repo-1",
+            [
+                new SnapshotFile(
+                    "Merkle.slnx",
+                    "solution-content-hash",
+                    Encoding.UTF8.GetBytes("<Solution><Project Path=\"src/Merkle.Cli/Merkle.Cli.csproj\" /></Solution>")),
+                new SnapshotFile(
+                    "src/Merkle.Cli/Merkle.Cli.csproj",
+                    "project-content-hash",
+                    Encoding.UTF8.GetBytes("<Project Sdk=\"Microsoft.NET.Sdk\" />"))
+            ]);
+        var index = await new DotNetAdapter().IndexAsync(new AdapterIndexRequest(snapshot, null), default);
+
+        Assert.Contains(index.Units, unit =>
+            unit.Kind == SourceUnitKind.Project &&
+            unit.SemanticSignature == string.Empty);
+        Assert.Contains(index.Units, unit =>
+            unit.Kind == SourceUnitKind.File &&
+            unit.SemanticSignature == string.Empty);
+
+        await store.PublishAsync(
+            journal,
+            new StatePublication(Report("run-1"), [new PersistedAdapterIndex(key, index)]),
+            default);
+
+        var persisted = await ((IIndexStore)store).ReadIndexAsync(key, default);
+        Assert.NotNull(persisted);
+        var project = Assert.Single(persisted.Units, unit => unit.Kind == SourceUnitKind.Project);
+        Assert.Equal(string.Empty, project.SemanticSignature);
+    }
+
+    [Theory]
+    [InlineData(SourceUnitKind.Repository)]
+    [InlineData(SourceUnitKind.Language)]
+    [InlineData(SourceUnitKind.Path)]
+    [InlineData(SourceUnitKind.Namespace)]
+    [InlineData(SourceUnitKind.Type)]
+    [InlineData(SourceUnitKind.Member)]
+    public async Task Publish_RejectsEmptySemanticSignatureForKindsThatRequireSemanticEvidence(
+        SourceUnitKind kind)
+    {
+        using var directory = new TemporaryDirectory();
+        var store = new LocalStateStore(directory.Path, ".merkle", "repo-1");
+        var journal = await store.BeginRunAsync("run-1", default);
+        var key = new IndexCompatibilityKey("repo-1", "head", 1, "sha256:1", "semantic:1", "dotnet", "1.0", "1", "1", "dotnet", "build:1");
+        var index = new AdapterIndex(
+            [new SourceUnit("unit:1", kind, "src/a.cs", "hash", string.Empty)],
+            [],
+            []);
+
+        var error = await Assert.ThrowsAsync<AnalysisException>(async () =>
+            await store.PublishAsync(
+                journal,
+                new StatePublication(Report("run-1"), [new PersistedAdapterIndex(key, index)]),
+                default));
+
+        Assert.Equal("IncompleteEvidence", error.Code);
+        Assert.Null(await store.ReadCurrentAsync(default));
+    }
+
+    public static TheoryData<string?> InvalidOptionalSemanticSignatures => new()
+    {
+        null,
+        " ",
+        new string('s', 513)
+    };
+
+    [Theory]
+    [MemberData(nameof(InvalidOptionalSemanticSignatures))]
+    public async Task Publish_RejectsInvalidOptionalSemanticSignature(string? semanticSignature)
+    {
+        using var directory = new TemporaryDirectory();
+        var store = new LocalStateStore(directory.Path, ".merkle", "repo-1");
+        var journal = await store.BeginRunAsync("run-1", default);
+        var key = new IndexCompatibilityKey("repo-1", "head", 1, "sha256:1", "semantic:1", "dotnet", "1.0", "1", "1", "dotnet", "build:1");
+        var index = new AdapterIndex(
+            [new SourceUnit("unit:1", SourceUnitKind.Project, "src/a.csproj", "hash", semanticSignature!)],
+            [],
+            []);
+
+        var error = await Assert.ThrowsAsync<AnalysisException>(async () =>
+            await store.PublishAsync(
+                journal,
+                new StatePublication(Report("run-1"), [new PersistedAdapterIndex(key, index)]),
+                default));
+
+        Assert.Equal("IncompleteEvidence", error.Code);
+        Assert.Null(await store.ReadCurrentAsync(default));
+    }
+
+    [Fact]
+    public async Task Publish_RoundTripsFailedTerminalReportWithoutMaskingOriginalError()
+    {
+        using var directory = new TemporaryDirectory();
+        var store = new LocalStateStore(directory.Path, ".merkle", "repo-1");
+        var journal = await store.BeginRunAsync("run-1", default);
+        var failure = Report("run-1") with
+        {
+            TerminalStatus = TerminalStatus.Failed,
+            ErrorClass = ErrorClass.AnalysisError,
+            ErrorCode = "InvalidProjectFile",
+            IdentitySchemas = [],
+            Warnings = ["The selected project file is invalid."]
+        };
+
+        await store.PublishAsync(journal, failure, default);
+
+        var persisted = await store.ReadCurrentAsync(default);
+        Assert.NotNull(persisted);
+        Assert.Equal(TerminalStatus.Failed, persisted.TerminalStatus);
+        Assert.Equal(ErrorClass.AnalysisError, persisted.ErrorClass);
+        Assert.Equal("InvalidProjectFile", persisted.ErrorCode);
+        Assert.Contains("The selected project file is invalid.", persisted.Warnings);
+    }
+
+    [Theory]
+    [InlineData(TerminalStatus.Failed)]
+    [InlineData(TerminalStatus.PolicyFailed)]
+    public async Task Publish_RejectsEvidenceWithoutNegotiatedIdentitySchemasAndKeepsCurrentState(
+        TerminalStatus terminalStatus)
+    {
+        using var directory = new TemporaryDirectory();
+        var store = new LocalStateStore(directory.Path, ".merkle", "repo-1");
+        var initialJournal = await store.BeginRunAsync("run-1", default);
+        var initialKey = new IndexCompatibilityKey("repo-1", "head", 1, "sha256:1", "semantic:1", "dotnet", "1.0", "1", "1", "dotnet", "build:1");
+        var initialIndex = new AdapterIndex(
+            [new SourceUnit("unit:initial", SourceUnitKind.Member, "src/initial.cs", "hash", "signature")],
+            [],
+            []);
+        var historyKey = new HistoryCompatibilityKey("repo-1", "1", "dotnet", "build:1");
+        var initialHistory = new HistoricalRun(
+            historyKey,
+            HistoryProvenance.Local,
+            HistoryRunStatus.Succeeded,
+            false,
+            DateTimeOffset.UnixEpoch,
+            ["unit:initial"],
+            []);
+        await store.PublishAsync(
+            initialJournal,
+            new StatePublication(
+                Report("run-1"),
+                [new PersistedAdapterIndex(initialKey, initialIndex)],
+                [initialHistory]),
+            default);
+        var attemptedJournal = await store.BeginRunAsync("run-2", default);
+        var attemptedKey = initialKey with { SnapshotIdentity = "attempted" };
+        var attemptedIndex = new AdapterIndex(
+            [new SourceUnit("unit:attempted", SourceUnitKind.Member, "src/attempted.cs", "hash", "signature")],
+            [],
+            []);
+        var attemptedHistory = new HistoricalRun(
+            historyKey,
+            HistoryProvenance.Local,
+            HistoryRunStatus.Failed,
+            false,
+            DateTimeOffset.UnixEpoch,
+            ["unit:attempted"],
+            []);
+        var failure = Report("run-2") with
+        {
+            TerminalStatus = terminalStatus,
+            ErrorClass = terminalStatus == TerminalStatus.PolicyFailed
+                ? ErrorClass.PolicyFailure
+                : ErrorClass.AnalysisError,
+            ErrorCode = "OriginalFailure",
+            IdentitySchemas = []
+        };
+
+        var error = await Assert.ThrowsAsync<AnalysisException>(async () =>
+            await store.PublishAsync(
+                attemptedJournal,
+                new StatePublication(
+                    failure,
+                    [new PersistedAdapterIndex(attemptedKey, attemptedIndex)],
+                    [attemptedHistory]),
+                default));
+
+        Assert.Equal("IncompleteEvidence", error.Code);
+        Assert.Equal("run-1", (await store.ReadCurrentAsync(default))?.RunId);
+        Assert.NotNull(await ((IIndexStore)store).ReadIndexAsync(initialKey, default));
+        Assert.Null(await ((IIndexStore)store).ReadIndexAsync(attemptedKey, default));
+        var histories = await ((IHistoryStore)store).ReadHistoryAsync(historyKey, default);
+        Assert.Equal("unit:initial", Assert.Single(histories).ChangedUnitIdentities.Single());
     }
 
     [Fact]

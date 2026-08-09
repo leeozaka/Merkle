@@ -62,6 +62,10 @@ public sealed class DeepExecutionEngine(
 
         try
         {
+            var resolver = request.Mode == DeepExecutionMode.RunSelected &&
+                           plan.Policy.Recommendation != PlanRecommendation.FullSuite
+                ? Require<ISelectedTestResolver>("resolve-selected-tests")
+                : null;
             var buildPreparer = Require<IBuildPreparer>("build");
             var discoverer = Require<ITestDiscoverer>("discover");
             var snapshots = await _snapshotSource.BindAsync(
@@ -81,7 +85,7 @@ public sealed class DeepExecutionEngine(
                 context,
                 prepared.Fingerprint,
                 cancellationToken).ConfigureAwait(false);
-            var selected = SelectTests(plan, catalog.Tests, request.Mode);
+            var selected = SelectTests(plan, catalog.Tests, request.Mode, resolver);
             if (selected.Count == 0 && plan.Tests.Any(test => test.Selected))
             {
                 throw new CapabilityException(
@@ -238,65 +242,29 @@ public sealed class DeepExecutionEngine(
         return report;
     }
 
-    private static IReadOnlyList<TestCatalogEntry> SelectTests(
+    private IReadOnlyList<TestCatalogEntry> SelectTests(
         TerminalReport plan,
         IReadOnlyList<TestCatalogEntry> catalog,
-        DeepExecutionMode mode)
+        DeepExecutionMode mode,
+        ISelectedTestResolver? resolver)
     {
         if (mode == DeepExecutionMode.Observe || plan.Policy.Recommendation == PlanRecommendation.FullSuite)
         {
             return [.. catalog.OrderBy(test => test.Identity, StringComparer.Ordinal)];
         }
 
-        var result = new Dictionary<string, TestCatalogEntry>(StringComparer.Ordinal);
-        foreach (var planned in plan.Tests.Where(test => test.Selected))
+        var selected = plan.Tests
+            .Where(test => test.Selected)
+            .Select(test => new SelectedTestReference(test.Identity, test.DisplayName))
+            .ToArray();
+        var resolution = resolver!.ResolveSelectedTests(selected, catalog);
+        if (resolution.UnresolvedTests.Count > 0)
         {
-            var exact = catalog.FirstOrDefault(test => test.Identity == planned.Identity);
-            if (exact is not null)
-            {
-                result[exact.Identity] = exact;
-                continue;
-            }
-
-            var project = ProjectFromIdentity(planned.Identity);
-            if (planned.Identity.StartsWith("dotnet-project:", StringComparison.Ordinal))
-            {
-                foreach (var test in catalog.Where(test => test.ProjectPath == project))
-                {
-                    result[test.Identity] = test;
-                }
-                continue;
-            }
-
-            if (project is not null)
-            {
-                result[planned.Identity] = new TestCatalogEntry(
-                    planned.Identity,
-                    planned.DisplayName,
-                    "dotnet",
-                    project,
-                    Selector(planned.DisplayName));
-            }
+            throw new CapabilityException(
+                "SelectedTestsUnavailable",
+                $"The runtime test catalog could not resolve {resolution.UnresolvedTests.Count} selected test identities.");
         }
-
-        return [.. result.Values.OrderBy(test => test.Identity, StringComparer.Ordinal)];
-    }
-
-    private static string? ProjectFromIdentity(string identity)
-    {
-        const string projectPrefix = "dotnet-project:";
-        if (identity.StartsWith(projectPrefix, StringComparison.Ordinal)) return identity[projectPrefix.Length..];
-        const string testPrefix = "dotnet:test:v1:";
-        const string delimiter = ":dotnet:type:";
-        if (!identity.StartsWith(testPrefix, StringComparison.Ordinal)) return null;
-        var end = identity.IndexOf(delimiter, testPrefix.Length, StringComparison.Ordinal);
-        return end < 0 ? null : identity[testPrefix.Length..end];
-    }
-
-    private static string Selector(string displayName)
-    {
-        var open = displayName.LastIndexOf('(');
-        return open > 0 ? displayName[..open] : displayName;
+        return resolution.Tests;
     }
 
     private static ReportTestExecution ToReportExecution(TestExecutionResult execution) => new(

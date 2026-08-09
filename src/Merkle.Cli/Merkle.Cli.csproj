@@ -1,0 +1,38 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <PublishAot>true</PublishAot>
+    <InvariantGlobalization>true</InvariantGlobalization>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../Merkle.Core/Merkle.Core.csproj" />
+    <ProjectReference Include="../Merkle.Infrastructure/Merkle.Infrastructure.csproj" />
+    <ProjectReference Include="../Merkle.Adapters.DotNet/Merkle.Adapters.DotNet.csproj" />
+    <ProjectReference Include="../Merkle.Adapters.DotNet.Worker/Merkle.Adapters.DotNet.Worker.csproj"
+                      ReferenceOutputAssembly="false"
+                      GlobalPropertiesToRemove="RuntimeIdentifier;SelfContained" />
+    <ProjectReference Include="../Merkle.Adapters.DotNet.Observer/Merkle.Adapters.DotNet.Observer.csproj"
+                      ReferenceOutputAssembly="false" />
+  </ItemGroup>
+
+  <Target Name="CopyDotNetToolchain" AfterTargets="Publish">
+    <ItemGroup>
+      <DotNetToolchainArtifact Include="$(MSBuildProjectDirectory)/../Merkle.Adapters.DotNet.Worker/bin/$(Configuration)/net10.0/**/*"
+                              Exclude="$(MSBuildProjectDirectory)/../Merkle.Adapters.DotNet.Worker/bin/$(Configuration)/net10.0/$(RuntimeIdentifier)/**/*" />
+      <DotNetToolchainArtifact Include="$(MSBuildProjectDirectory)/../Merkle.Adapters.DotNet.Observer/bin/$(Configuration)/net8.0/*" />
+    </ItemGroup>
+    <Copy SourceFiles="@(DotNetToolchainArtifact)"
+          DestinationFiles="@(DotNetToolchainArtifact->'$(PublishDir)workers/dotnet/%(RecursiveDir)%(Filename)%(Extension)')"
+          SkipUnchangedFiles="true" />
+    <Error Condition="!Exists('$(PublishDir)workers/dotnet/Merkle.Adapters.DotNet.Worker.dll')"
+           Text="The published CLI is missing the managed .NET semantic worker." />
+    <Error Condition="!Exists('$(PublishDir)workers/dotnet/Merkle.Adapters.DotNet.Observer.dll')"
+           Text="The published CLI is missing the .NET startup-hook observer." />
+  </Target>
+
+</Project>

@@ -1,0 +1,46 @@
+name: ci
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            rid: linux-x64
+          - os: macos-14
+            rid: osx-arm64
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: |
+            8.0.x
+            10.0.x
+      - run: dotnet restore Merkle.slnx
+      - run: dotnet restore src/Merkle.Cli/Merkle.Cli.csproj --runtime ${{ matrix.rid }}
+      - run: dotnet list Merkle.slnx package --vulnerable --include-transitive
+      - run: dotnet build Merkle.slnx --configuration Release --no-restore --warnaserror
+      - run: dotnet format Merkle.slnx --no-restore --verify-no-changes
+      - run: dotnet test tests/Merkle.Tests/Merkle.Tests.csproj --configuration Release --no-build --no-restore
+      - run: dotnet publish src/Merkle.Cli/Merkle.Cli.csproj --configuration Release --runtime ${{ matrix.rid }} --self-contained true --no-restore --output artifacts/${{ matrix.rid }}
+      - name: Smoke native package
+        shell: bash
+        run: |
+          artifacts/${{ matrix.rid }}/Merkle.Cli --help
+          test -f artifacts/${{ matrix.rid }}/workers/dotnet/Merkle.Adapters.DotNet.Worker.dll
+          test -f artifacts/${{ matrix.rid }}/workers/dotnet/Merkle.Adapters.DotNet.Observer.dll
+      - uses: actions/upload-artifact@v4
+        with:
+          name: merkle-${{ matrix.rid }}
+          path: artifacts/${{ matrix.rid }}
+          if-no-files-found: error

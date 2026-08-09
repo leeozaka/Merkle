@@ -1,0 +1,34 @@
+# Merkle configuration schema 1.
+schemaVersion: 1
+
+repository:
+  solution: Example.sln
+  stateDirectory: .merkle
+  # Generate once, review, and share only with trusted clones.
+  repositoryId: 019fde48-89db-7230-b822-c9f25c100df8
+
+languages:
+  dotnet:
+    profile: deep
+
+baseline:
+  localRef: development
+  prStrategy: merge-base
+
+execution:
+  build: true
+  serialObservation: true
+  configuration: Release
+  platform: linux
+  # timeoutMs intentionally omitted: Merkle has no default timeout.
+
+policy:
+  minSavingsPercent: 30
+  # The repository owner must choose confidence behavior before automatic
+  # selected-versus-full execution is enabled.
+  confidenceThreshold: null
+  onLowConfidence: null
+  unmapped: warn
+
+history:
+  provider: local

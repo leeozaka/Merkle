@@ -1,0 +1,41 @@
+{
+  "schemaVersion": 1,
+  "requiredProperties": [
+    "schemaVersion",
+    "runId",
+    "terminalStatus",
+    "errorClass",
+    "errorCode",
+    "baseline",
+    "candidate",
+    "repositoryIdentity",
+    "languages",
+    "limits",
+    "adapters",
+    "capabilities",
+    "indexSchema",
+    "identitySchemas",
+    "buildFingerprint",
+    "buildContext",
+    "changedUnits",
+    "tests",
+    "unmappedUnits",
+    "warnings",
+    "history",
+    "economics",
+    "policy",
+    "evidenceCutoff",
+    "executions"
+  ],
+  "plannedTestProperties": [
+    "identity",
+    "displayName",
+    "selected",
+    "impactProbability",
+    "evidenceConfidence",
+    "expectedDurationMs",
+    "estimates",
+    "reasons",
+    "excludedBy"
+  ]
+}

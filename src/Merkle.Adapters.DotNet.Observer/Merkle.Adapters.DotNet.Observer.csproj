@@ -1,0 +1,7 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <!-- net8.0 is the broadest runtime installed in the supported local toolchain. -->
+    <TargetFramework>net8.0</TargetFramework>
+    <!-- Loaded into the test host; it is not linked into the native CLI. -->
+  </PropertyGroup>
+</Project>

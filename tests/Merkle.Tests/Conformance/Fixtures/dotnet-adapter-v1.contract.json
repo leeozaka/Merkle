@@ -1,0 +1,12 @@
+{
+  "protocolVersion": "1.0",
+  "language": "dotnet",
+  "producer": "merkle",
+  "adapterVersion": "0.1.0",
+  "unitIdentityVersion": "1",
+  "testIdentityVersion": "1",
+  "capabilities": ["Detect", "Index", "Map"],
+  "profiles": ["minimal"],
+  "supportedTargets": ["net6.0+"],
+  "supportedPlatforms": ["linux", "macos"]
+}

@@ -1,0 +1,8 @@
+**/bin/
+**/obj/
+.merkle/
+TestResults/
+coverage/
+*.user
+*.suo
+

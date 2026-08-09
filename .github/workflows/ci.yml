@@ -39,7 +39,7 @@ jobs:
           artifacts/${{ matrix.rid }}/Merkle.Cli --help
           test -f artifacts/${{ matrix.rid }}/workers/dotnet/Merkle.Adapters.DotNet.Worker.dll
           test -f artifacts/${{ matrix.rid }}/workers/dotnet/Merkle.Adapters.DotNet.Observer.dll
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: merkle-${{ matrix.rid }}
           path: artifacts/${{ matrix.rid }}

@@ -131,7 +131,9 @@ public sealed class DotNetProcessAnalysisWorkerTests
         var workerAssembly = Path.Combine(
             repositoryRoot,
             "src",
-            "Merkle.Adapters.DotNet.Worker",
+            "adapters",
+            "dotnet",
+            "worker",
             "bin",
             configuration,
             testOutput.Name,

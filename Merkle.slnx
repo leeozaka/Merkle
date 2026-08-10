@@ -1,11 +1,11 @@
 <Solution>
   <Folder Name="/src/">
-    <Project Path="src/Merkle.Adapters.DotNet/Merkle.Adapters.DotNet.csproj" />
-    <Project Path="src/Merkle.Adapters.DotNet.Observer/Merkle.Adapters.DotNet.Observer.csproj" />
-    <Project Path="src/Merkle.Adapters.DotNet.Worker/Merkle.Adapters.DotNet.Worker.csproj" />
-    <Project Path="src/Merkle.Cli/Merkle.Cli.csproj" />
-    <Project Path="src/Merkle.Core/Merkle.Core.csproj" />
-    <Project Path="src/Merkle.Infrastructure/Merkle.Infrastructure.csproj" />
+    <Project Path="src/adapters/dotnet/Merkle.Adapters.DotNet.csproj" />
+    <Project Path="src/adapters/dotnet/observer/Merkle.Adapters.DotNet.Observer.csproj" />
+    <Project Path="src/adapters/dotnet/worker/Merkle.Adapters.DotNet.Worker.csproj" />
+    <Project Path="src/cli/Merkle.Cli.csproj" />
+    <Project Path="src/core/Merkle.Core.csproj" />
+    <Project Path="src/infrastructure/Merkle.Infrastructure.csproj" />
   </Folder>
   <Folder Name="/tests/">
     <Project Path="tests/Merkle.Tests/Merkle.Tests.csproj" />

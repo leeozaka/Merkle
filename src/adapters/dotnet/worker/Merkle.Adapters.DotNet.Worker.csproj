@@ -7,8 +7,8 @@
     <IsTrimmable>false</IsTrimmable>
   </PropertyGroup>
   <ItemGroup>
-    <ProjectReference Include="../Merkle.Adapters.DotNet/Merkle.Adapters.DotNet.csproj" />
-    <ProjectReference Include="../Merkle.Core/Merkle.Core.csproj" />
+    <ProjectReference Include="../Merkle.Adapters.DotNet.csproj" />
+    <ProjectReference Include="../../../core/Merkle.Core.csproj" />
     <PackageReference Include="Microsoft.CodeAnalysis.CSharp" Version="5.0.0" />
   </ItemGroup>
 </Project>

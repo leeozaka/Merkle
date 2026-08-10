@@ -10,21 +10,21 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <ProjectReference Include="../Merkle.Core/Merkle.Core.csproj" />
-    <ProjectReference Include="../Merkle.Infrastructure/Merkle.Infrastructure.csproj" />
-    <ProjectReference Include="../Merkle.Adapters.DotNet/Merkle.Adapters.DotNet.csproj" />
-    <ProjectReference Include="../Merkle.Adapters.DotNet.Worker/Merkle.Adapters.DotNet.Worker.csproj"
+    <ProjectReference Include="../core/Merkle.Core.csproj" />
+    <ProjectReference Include="../infrastructure/Merkle.Infrastructure.csproj" />
+    <ProjectReference Include="../adapters/dotnet/Merkle.Adapters.DotNet.csproj" />
+    <ProjectReference Include="../adapters/dotnet/worker/Merkle.Adapters.DotNet.Worker.csproj"
                       ReferenceOutputAssembly="false"
                       GlobalPropertiesToRemove="RuntimeIdentifier;SelfContained" />
-    <ProjectReference Include="../Merkle.Adapters.DotNet.Observer/Merkle.Adapters.DotNet.Observer.csproj"
+    <ProjectReference Include="../adapters/dotnet/observer/Merkle.Adapters.DotNet.Observer.csproj"
                       ReferenceOutputAssembly="false" />
   </ItemGroup>
 
   <Target Name="CopyDotNetToolchain" AfterTargets="Publish">
     <ItemGroup>
-      <DotNetToolchainArtifact Include="$(MSBuildProjectDirectory)/../Merkle.Adapters.DotNet.Worker/bin/$(Configuration)/net10.0/**/*"
-                              Exclude="$(MSBuildProjectDirectory)/../Merkle.Adapters.DotNet.Worker/bin/$(Configuration)/net10.0/$(RuntimeIdentifier)/**/*" />
-      <DotNetToolchainArtifact Include="$(MSBuildProjectDirectory)/../Merkle.Adapters.DotNet.Observer/bin/$(Configuration)/net8.0/*" />
+      <DotNetToolchainArtifact Include="$(MSBuildProjectDirectory)/../adapters/dotnet/worker/bin/$(Configuration)/net10.0/**/*"
+                              Exclude="$(MSBuildProjectDirectory)/../adapters/dotnet/worker/bin/$(Configuration)/net10.0/$(RuntimeIdentifier)/**/*" />
+      <DotNetToolchainArtifact Include="$(MSBuildProjectDirectory)/../adapters/dotnet/observer/bin/$(Configuration)/net8.0/*" />
     </ItemGroup>
     <Copy SourceFiles="@(DotNetToolchainArtifact)"
           DestinationFiles="@(DotNetToolchainArtifact->'$(PublishDir)workers/dotnet/%(RecursiveDir)%(Filename)%(Extension)')"

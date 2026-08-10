@@ -6,7 +6,7 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <ProjectReference Include="../Merkle.Core/Merkle.Core.csproj" />
+    <ProjectReference Include="../core/Merkle.Core.csproj" />
   </ItemGroup>
 
   <ItemGroup>

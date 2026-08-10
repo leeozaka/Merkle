@@ -32,10 +32,10 @@ jobs:
             8.0.x
             10.0.x
       - run: dotnet restore Merkle.slnx
-      - run: dotnet restore src/Merkle.Cli/Merkle.Cli.csproj --runtime ${{ matrix.rid }}
+      - run: dotnet restore src/cli/Merkle.Cli.csproj --runtime ${{ matrix.rid }}
       - run: dotnet list Merkle.slnx package --vulnerable --include-transitive
       - run: dotnet build Merkle.slnx --configuration Release --no-restore --warnaserror
-      - run: dotnet publish src/Merkle.Cli/Merkle.Cli.csproj --configuration Release --runtime ${{ matrix.rid }} --self-contained true --no-restore --output artifacts/merkle-${{ matrix.rid }}
+      - run: dotnet publish src/cli/Merkle.Cli.csproj --configuration Release --runtime ${{ matrix.rid }} --self-contained true --no-restore --output artifacts/merkle-${{ matrix.rid }}
       - name: Smoke native package
         shell: bash
         run: |

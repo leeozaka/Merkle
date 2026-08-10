@@ -6,7 +6,8 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <ProjectReference Include="../Merkle.Core/Merkle.Core.csproj" />
+    <Compile Remove="observer/**/*.cs" />
+    <Compile Remove="worker/**/*.cs" />
+    <ProjectReference Include="../../core/Merkle.Core.csproj" />
   </ItemGroup>
 </Project>
-

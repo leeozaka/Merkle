@@ -21,11 +21,11 @@ Set the companion paths when the target repository is different from the Merkle 
 
 ```bash
 export MERKLE_SOURCE=/absolute/path/to/Merkle
-export MERKLE_DOTNET_WORKER="$MERKLE_SOURCE/src/Merkle.Adapters.DotNet.Worker/bin/Debug/net10.0/Merkle.Adapters.DotNet.Worker.dll"
-export MERKLE_DOTNET_OBSERVER="$MERKLE_SOURCE/src/Merkle.Adapters.DotNet.Observer/bin/Debug/net8.0/Merkle.Adapters.DotNet.Observer.dll"
+export MERKLE_DOTNET_WORKER="$MERKLE_SOURCE/src/adapters/dotnet/worker/bin/Debug/net10.0/Merkle.Adapters.DotNet.Worker.dll"
+export MERKLE_DOTNET_OBSERVER="$MERKLE_SOURCE/src/adapters/dotnet/observer/bin/Debug/net8.0/Merkle.Adapters.DotNet.Observer.dll"
 
 cd /absolute/path/to/repository-under-test
-dotnet "$MERKLE_SOURCE/src/Merkle.Cli/bin/Debug/net10.0/Merkle.Cli.dll" --help
+dotnet "$MERKLE_SOURCE/src/cli/bin/Debug/net10.0/Merkle.Cli.dll" --help
 ```
 
 Run all later examples by replacing `merkle` with that `dotnet ...Merkle.Cli.dll` command, or publish a native package and invoke its executable directly.
@@ -47,9 +47,9 @@ The following example publishes for Apple silicon. Change `MERKLE_RID` for anoth
 export MERKLE_RID=osx-arm64
 
 dotnet restore Merkle.slnx
-dotnet restore src/Merkle.Cli/Merkle.Cli.csproj --runtime "$MERKLE_RID"
+dotnet restore src/cli/Merkle.Cli.csproj --runtime "$MERKLE_RID"
 dotnet build Merkle.slnx --configuration Release --no-restore
-dotnet publish src/Merkle.Cli/Merkle.Cli.csproj \
+dotnet publish src/cli/Merkle.Cli.csproj \
   --configuration Release \
   --runtime "$MERKLE_RID" \
   --self-contained true \

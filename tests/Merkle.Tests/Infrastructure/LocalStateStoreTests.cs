@@ -264,9 +264,9 @@ public sealed class LocalStateStoreTests
                 new SnapshotFile(
                     "Merkle.slnx",
                     "solution-content-hash",
-                    Encoding.UTF8.GetBytes("<Solution><Project Path=\"src/Merkle.Cli/Merkle.Cli.csproj\" /></Solution>")),
+                    Encoding.UTF8.GetBytes("<Solution><Project Path=\"src/cli/Merkle.Cli.csproj\" /></Solution>")),
                 new SnapshotFile(
-                    "src/Merkle.Cli/Merkle.Cli.csproj",
+                    "src/cli/Merkle.Cli.csproj",
                     "project-content-hash",
                     Encoding.UTF8.GetBytes("<Project Sdk=\"Microsoft.NET.Sdk\" />"))
             ]);

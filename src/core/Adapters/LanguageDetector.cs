@@ -16,6 +16,7 @@ public sealed class LanguageDetector
     public static LanguageDetector CreateDefault() => new([
         new LanguageRule("dotnet", [".cs", ".fs", ".vb", ".csproj", ".fsproj", ".vbproj", ".sln", ".slnx"]),
         new LanguageRule("golang", [".go", "go.mod", "go.work"]),
+        new LanguageRule("python", [".py", "pyproject.toml", "setup.py", "setup.cfg", "requirements.txt", "Pipfile", "poetry.lock"]),
         new LanguageRule("typescript", [".ts", ".tsx", "tsconfig.json"])
     ]);
 

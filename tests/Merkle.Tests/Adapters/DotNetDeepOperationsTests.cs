@@ -15,6 +15,25 @@ public sealed class DotNetDeepOperationsTests : IDisposable
     public DotNetDeepOperationsTests() => Directory.CreateDirectory(_root);
 
     [Fact]
+    public void Constructor_RejectsMissingDependenciesAndPaths()
+    {
+        Assert.Throws<ArgumentNullException>(() => new DotNetDeepOperations(null!, "observer.dll"));
+        Assert.Throws<ArgumentException>(() => new DotNetDeepOperations(new FakeRunner(), " "));
+        Assert.Throws<ArgumentException>(() => new DotNetDeepOperations(new FakeRunner(), "observer.dll", "\t"));
+    }
+
+    [Fact]
+    public async Task PrepareBuild_RequiresConfiguredObserver()
+    {
+        var operations = new DotNetDeepOperations(new FakeRunner(), Path.Combine(_root, "missing-observer.dll"));
+
+        var error = await Assert.ThrowsAsync<CapabilityException>(() =>
+            operations.PrepareBuildAsync(new BuildPreparationRequest(Context()), default).AsTask());
+
+        Assert.Equal("DeepToolchainUnavailable", error.Code);
+    }
+
+    [Fact]
     public async Task PrepareBuild_BuildsAndWritesDeterministicManifest()
     {
         var observer = Path.Combine(_root, "observer.dll");
@@ -97,6 +116,57 @@ public sealed class DotNetDeepOperationsTests : IDisposable
         Assert.Equal(2, catalog.Tests.Count);
         Assert.Contains(catalog.Tests, test => test.Identity.StartsWith("dotnet:test:v1:", StringComparison.Ordinal));
         Assert.Contains(catalog.Warnings, warning => warning.Contains("runner identity", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task Discover_ReportsFailedProjectAndIgnoresOutputWithoutEnglishHeader()
+    {
+        var observer = await ObserverAsync();
+        var attempts = 0;
+        var operations = new DotNetDeepOperations(new FakeRunner(request =>
+        {
+            if (!request.Arguments.Contains("--list-tests")) return Success(request);
+            attempts++;
+            return attempts == 1
+                ? new ProcessResult(1, string.Empty, "discovery failed")
+                : new ProcessResult(0, "No tests were listed", string.Empty);
+        }), observer);
+        var context = Context(
+            Snapshot("Repo.slnx", "<Solution><Project Path=\"tests/One.Tests/One.Tests.csproj\" /><Project Path=\"tests/Two.Tests/Two.Tests.csproj\" /></Solution>"),
+            Snapshot("tests/One.Tests/One.Tests.csproj", "<Project><PropertyGroup><IsTestProject>true</IsTestProject></PropertyGroup></Project>"),
+            Snapshot("tests/Two.Tests/Two.Tests.csproj", "<Project><ItemGroup><PackageReference Include=\"xunit\" /></ItemGroup></Project>"));
+
+        var catalog = await operations.DiscoverAsync(context, Fingerprint(), default);
+
+        Assert.Empty(catalog.Tests);
+        Assert.Contains("discovery failed", Assert.Single(catalog.Warnings), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task Discover_ParsesSlnProjectsAndRecognizesSupportedTestPackages()
+    {
+        var observer = await ObserverAsync();
+        var operations = new DotNetDeepOperations(new FakeRunner(request =>
+            request.Arguments.Contains("--list-tests")
+                ? new ProcessResult(0, "Tests are available:\r\n  Example.Tests.Runs\r\n  Example.Tests.Runs\r\nTotal tests: 1\r\nTest Run Successful.", string.Empty)
+                : Success(request)), observer);
+        var solution = string.Join('\n',
+            "Project(\"{A}\") = \"App\", \"src/App/App.csproj\", \"{1}\"",
+            "Project(\"{A}\") = \"FSharp.Tests\", \"tests/FSharp.Tests/FSharp.Tests.fsproj\", \"{2}\"",
+            "Project(\"{A}\") = \"VisualBasic.Tests\", \"tests/VisualBasic.Tests/VisualBasic.Tests.vbproj\", \"{3}\"",
+            "Project(\"{A}\") = \"NUnit.Tests\", \"tests/NUnit.Tests/NUnit.Tests.csproj\", \"{4}\"",
+            "Project(\"{A}\") = \"Notes\", \"docs/notes.txt\", \"{5}\"");
+        var context = Context(
+            Snapshot("Repo.sln", solution),
+            Snapshot("src/App/App.csproj", "<Project />"),
+            Snapshot("tests/FSharp.Tests/FSharp.Tests.fsproj", "<Project><ItemGroup><PackageReference Include=\"Microsoft.NET.Test.Sdk\" /></ItemGroup></Project>"),
+            Snapshot("tests/VisualBasic.Tests/VisualBasic.Tests.vbproj", "<Project><ItemGroup><PackageReference Include=\"xunit\" /></ItemGroup></Project>"),
+            Snapshot("tests/NUnit.Tests/NUnit.Tests.csproj", "<Project><ItemGroup><PackageReference Include=\"NUnit\" /></ItemGroup></Project>"));
+
+        var catalog = await operations.DiscoverAsync(context, Fingerprint(), default);
+
+        Assert.Equal(3, catalog.Tests.Count);
+        Assert.All(catalog.Tests, test => Assert.Equal("Example.Tests.Runs", test.Selector));
     }
 
     [Fact]
@@ -281,6 +351,74 @@ public sealed class DotNetDeepOperationsTests : IDisposable
     }
 
     [Theory]
+    [InlineData("Passed", TestOutcome.Passed)]
+    [InlineData("Timeout", TestOutcome.TimedOut)]
+    [InlineData("Aborted", TestOutcome.Cancelled)]
+    [InlineData("NotExecuted", TestOutcome.Skipped)]
+    [InlineData("Inconclusive", TestOutcome.Skipped)]
+    [InlineData("Unexpected", TestOutcome.Crashed)]
+    public async Task Execute_ClassifiesEveryTrxOutcome(string trxOutcome, TestOutcome expected)
+    {
+        var observer = await ObserverAsync();
+        var operations = new DotNetDeepOperations(new FakeRunner(request =>
+        {
+            if (request.Arguments[0] != "test") return Success(request);
+            var directory = request.Arguments[request.Arguments.ToList().IndexOf("--results-directory") + 1];
+            Directory.CreateDirectory(directory);
+            File.WriteAllText(
+                Path.Combine(directory, "merkle.trx"),
+                $"<TestRun><Results><UnitTestResult outcome=\"{trxOutcome}\" duration=\"not-a-duration\" /></Results></TestRun>");
+            return new ProcessResult(0, string.Empty, string.Empty);
+        }), observer);
+
+        var result = Assert.Single(await operations.ExecuteAsync(
+            new SelectedExecutionRequest(Context(), Fingerprint(), [Test()]), default));
+
+        Assert.Equal(expected, result.Outcome);
+        Assert.Null(result.Duration);
+        Assert.Null(result.Diagnostics);
+    }
+
+    [Fact]
+    public async Task PrepareBuild_MaterializesAndReusesImmutableSnapshotWorkspace()
+    {
+        var observer = await ObserverAsync();
+        var runner = new FakeRunner();
+        var operations = new DotNetDeepOperations(runner, observer);
+        var context = Context(
+            "main",
+            Snapshot("Repo.slnx", "<Solution><Project Path=\"src/App/App.csproj\" /></Solution>"),
+            Snapshot("src/App/App.csproj", "<Project><PropertyGroup><TargetFrameworks>net8.0; net9.0</TargetFrameworks><AssemblyName>Custom.App</AssemblyName></PropertyGroup></Project>"),
+            Snapshot("tools/run.sh", "#!/bin/sh\n", SnapshotEntryKind.ExecutableFile),
+            Snapshot("tools/current", "run.sh", SnapshotEntryKind.SymbolicLink));
+
+        await operations.PrepareBuildAsync(new BuildPreparationRequest(context), default);
+        await operations.PrepareBuildAsync(new BuildPreparationRequest(context), default);
+
+        var workspace = runner.Requests.First(request => request.Arguments[0] == "--version").WorkingDirectory;
+        Assert.NotEqual(_root, workspace);
+        Assert.True(File.Exists(Path.Combine(workspace, "Repo.slnx")));
+        Assert.True(File.Exists(Path.Combine(workspace, "tools/current")));
+    }
+
+    [Theory]
+    [InlineData("/outside")]
+    [InlineData("../outside")]
+    public async Task PrepareBuild_RejectsUnsafeSnapshotSymlink(string target)
+    {
+        var operations = new DotNetDeepOperations(new FakeRunner(), await ObserverAsync());
+        var context = Context(
+            "main",
+            Snapshot("Repo.slnx", "<Solution />"),
+            Snapshot("unsafe-link", target, SnapshotEntryKind.SymbolicLink));
+
+        var error = await Assert.ThrowsAsync<AnalysisException>(() =>
+            operations.PrepareBuildAsync(new BuildPreparationRequest(context), default).AsTask());
+
+        Assert.Equal("UnsafeSnapshotPath", error.Code);
+    }
+
+    [Theory]
     [InlineData(0)]
     [InlineData(1)]
     public async Task Execute_ClassifiesMissingSelectedTestResultAsAnalysisFailure(int exitCode)
@@ -369,10 +507,25 @@ public sealed class DotNetDeepOperationsTests : IDisposable
         return new DeepAdapterContext(snapshot, StateDirectory: Path.Combine(_root, "state"));
     }
 
-    private static SnapshotFile Snapshot(string path, string content)
+    private DeepAdapterContext Context(params SnapshotFile[] files) => Context("WORKTREE", files);
+
+    private DeepAdapterContext Context(string reference, params SnapshotFile[] files)
+    {
+        var snapshot = new RepositorySnapshot(
+            new SnapshotIdentity("snapshot", reference, "git"),
+            _root,
+            "repo",
+            files);
+        return new DeepAdapterContext(snapshot, StateDirectory: Path.Combine(_root, "state"));
+    }
+
+    private static SnapshotFile Snapshot(
+        string path,
+        string content,
+        SnapshotEntryKind kind = SnapshotEntryKind.RegularFile)
     {
         var bytes = Encoding.UTF8.GetBytes(content);
-        return new SnapshotFile(path, Convert.ToHexString(SHA256.HashData(bytes)), bytes);
+        return new SnapshotFile(path, Convert.ToHexString(SHA256.HashData(bytes)), bytes, kind);
     }
 
     private async Task<string> ObserverAsync()

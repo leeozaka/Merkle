@@ -56,10 +56,33 @@ DotNetDeepOperations? deepOperations = observerPath is null
     ? null
     : new DotNetDeepOperations(processRunner, observerPath);
 var adapter = new DotNetAdapter(analysisWorker, deepOperations);
+
+var javaAdapterPath = FindArtifact(
+    repositoryRoot,
+    "MERKLE_JAVA_ADAPTER",
+    "merkle-adapter-java.jar",
+    "adapters/java/target");
+ILanguageAdapter? javaAdapter = null;
+if (javaAdapterPath is not null)
+{
+    var isJar = javaAdapterPath.EndsWith(".jar", StringComparison.OrdinalIgnoreCase);
+    var executable = isJar ? "java" : javaAdapterPath;
+    var arguments = isJar ? new[] { "-jar", javaAdapterPath } : Array.Empty<string>();
+    javaAdapter = new ProcessLanguageAdapter(
+        processRunner,
+        new ProcessLanguageAdapterOptions(executable, arguments, repositoryRoot));
+}
+
+var adapters = new List<ILanguageAdapter> { adapter };
+if (javaAdapter is not null)
+{
+    adapters.Add(javaAdapter);
+}
+
 var engine = new ImpactEngine(
     snapshotSource,
     LanguageDetector.CreateDefault(),
-    new AdapterRegistry([adapter]),
+    new AdapterRegistry(adapters),
     stateStore,
     TimeProvider.System,
     repositoryIdentity,
@@ -104,6 +127,7 @@ static string? FindArtifact(string repositoryRoot, string environmentVariable, s
         configured,
         Path.Combine(AppContext.BaseDirectory, "workers", "dotnet", fileName),
         Path.Combine(AppContext.BaseDirectory, fileName),
+        Path.Combine(repositoryRoot, "src", "adapters", "java", "target", fileName),
         Path.Combine(repositoryRoot, "src", projectName, "bin", "Debug", projectName.EndsWith("Observer", StringComparison.Ordinal) ? "net8.0" : "net10.0", fileName),
         Path.Combine(repositoryRoot, "src", projectName, "bin", "Release", projectName.EndsWith("Observer", StringComparison.Ordinal) ? "net8.0" : "net10.0", fileName)
     };

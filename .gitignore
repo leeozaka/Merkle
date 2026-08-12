@@ -1,8 +1,11 @@
 **/bin/
 **/obj/
+**/target/
 .merkle/
+graphify-out/
 TestResults/
 coverage/
 *.user
 *.suo
+
 

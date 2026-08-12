@@ -57,6 +57,18 @@ DotNetDeepOperations? deepOperations = observerPath is null
     : new DotNetDeepOperations(processRunner, observerPath);
 var adapter = new DotNetAdapter(analysisWorker, deepOperations);
 
+var pythonAdapterPath = FindArtifact(
+    repositoryRoot,
+    "MERKLE_PYTHON_ADAPTER",
+    "merkle-adapter-python.pyz",
+    "adapters/python");
+ILanguageAdapter? pythonAdapter = null;
+if (pythonAdapterPath is not null)
+{
+    var isPyz = pythonAdapterPath.EndsWith(".pyz", StringComparison.OrdinalIgnoreCase);
+    var executable = isPyz ? "python3" : pythonAdapterPath;
+    var arguments = isPyz ? new[] { pythonAdapterPath } : Array.Empty<string>();
+    pythonAdapter = new ProcessLanguageAdapter(
 var javaAdapterPath = FindArtifact(
     repositoryRoot,
     "MERKLE_JAVA_ADAPTER",
@@ -74,6 +86,9 @@ if (javaAdapterPath is not null)
 }
 
 var adapters = new List<ILanguageAdapter> { adapter };
+if (pythonAdapter is not null)
+{
+    adapters.Add(pythonAdapter);
 if (javaAdapter is not null)
 {
     adapters.Add(javaAdapter);
@@ -127,6 +142,7 @@ static string? FindArtifact(string repositoryRoot, string environmentVariable, s
         configured,
         Path.Combine(AppContext.BaseDirectory, "workers", "dotnet", fileName),
         Path.Combine(AppContext.BaseDirectory, fileName),
+        Path.Combine(repositoryRoot, "src", "adapters", "python", fileName),
         Path.Combine(repositoryRoot, "src", "adapters", "java", "target", fileName),
         Path.Combine(repositoryRoot, "src", projectName, "bin", "Debug", projectName.EndsWith("Observer", StringComparison.Ordinal) ? "net8.0" : "net10.0", fileName),
         Path.Combine(repositoryRoot, "src", projectName, "bin", "Release", projectName.EndsWith("Observer", StringComparison.Ordinal) ? "net8.0" : "net10.0", fileName)

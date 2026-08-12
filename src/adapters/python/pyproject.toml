@@ -1,0 +1,21 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "merkle-adapter-python"
+version = "1.0.0"
+description = "Merkle Protocol 1.0 Language Adapter for Python"
+readme = "README.md"
+requires-python = ">=3.10"
+authors = [
+    { name = "Merkle Contributors" }
+]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+]
+
+[project.scripts]
+merkle-adapter-python = "merkle_adapter.__main__:main"

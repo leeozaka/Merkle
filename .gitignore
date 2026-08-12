@@ -1,6 +1,8 @@
 **/bin/
 **/obj/
 **/target/
+**/__pycache__/
+*.pyc
 .merkle/
 graphify-out/
 TestResults/

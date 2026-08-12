@@ -69,6 +69,10 @@ if (pythonAdapterPath is not null)
     var executable = isPyz ? "python3" : pythonAdapterPath;
     var arguments = isPyz ? new[] { pythonAdapterPath } : Array.Empty<string>();
     pythonAdapter = new ProcessLanguageAdapter(
+        processRunner,
+        new ProcessLanguageAdapterOptions(executable, arguments, repositoryRoot));
+}
+
 var javaAdapterPath = FindArtifact(
     repositoryRoot,
     "MERKLE_JAVA_ADAPTER",
@@ -89,6 +93,8 @@ var adapters = new List<ILanguageAdapter> { adapter };
 if (pythonAdapter is not null)
 {
     adapters.Add(pythonAdapter);
+}
+
 if (javaAdapter is not null)
 {
     adapters.Add(javaAdapter);

@@ -1,6 +1,6 @@
 ## Build for local development
 
-Install the .NET 10.0.301 SDK or a compatible later patch. The repository's `global.json` selects that SDK family. The .NET 8 runtime is also used by the startup-hook observer.
+Install the .NET 10.0.301 SDK or a compatible later patch and Go 1.22 or newer. The repository's `global.json` selects the .NET SDK family. The .NET 8 runtime is also used by the startup-hook observer; Go builds and tests the bundled Go worker.
 
 From the Merkle source directory:
 
@@ -23,6 +23,7 @@ Set the companion paths when the target repository is different from the Merkle 
 export MERKLE_SOURCE=/absolute/path/to/Merkle
 export MERKLE_DOTNET_WORKER="$MERKLE_SOURCE/src/adapters/dotnet/worker/bin/Debug/net10.0/Merkle.Adapters.DotNet.Worker.dll"
 export MERKLE_DOTNET_OBSERVER="$MERKLE_SOURCE/src/adapters/dotnet/observer/bin/Debug/net8.0/Merkle.Adapters.DotNet.Observer.dll"
+export MERKLE_GO_ADAPTER="$MERKLE_SOURCE/src/cli/bin/Debug/net10.0/workers/go/merkle-adapter-go"
 
 cd /absolute/path/to/repository-under-test
 dotnet "$MERKLE_SOURCE/src/cli/bin/Debug/net10.0/Merkle.Cli.dll" --help
@@ -64,9 +65,9 @@ Smoke-test the package:
 "artifacts/$MERKLE_RID/Merkle.Cli" state status
 ```
 
-Deploy the entire output directory. The native executable needs the SQLite library and the files beneath `workers/dotnet`; copying only `Merkle.Cli` disables semantic and deep analysis.
+Deploy the entire output directory. The native executable needs the SQLite library and the files beneath `workers/dotnet` and `workers/go`; copying only `Merkle.Cli` disables semantic and deep analysis.
 
-The package is self-contained for the CLI, but deep analysis still invokes the target repository's system `dotnet`. Install Git and every SDK or targeting pack required by that repository. Merkle honors its `global.json` and supports projects targeting .NET 6 or later.
+The package is self-contained for the CLI and bundles the Go protocol worker, but deep analysis still invokes the target repository's system `dotnet` or `go`. Install Git and the toolchain required by that repository. Merkle honors .NET `global.json`, supports projects targeting .NET 6 or later, and requires Go 1.22 or newer for Go deep analysis.
 
 On a CI runner, unpack the directory into a fixed location and invoke the executable by its absolute path. The examples below use `merkle` as shorthand for that path.
 
@@ -117,6 +118,18 @@ history:
 
 Replace `Example.sln` with the target solution. Generate a new `repositoryId` with `uuidgen`; do not reuse the sample identity across unrelated repositories.
 
+For a Go repository, select `golang` and point `repository.solution` at `go.work` or `go.mod`. Omit `solution` when the snapshot contains one unambiguous workspace or module scope. The CLI accepts `go` as an alias, but configuration and reports use `golang`.
+
+```yaml
+repository:
+  solution: go.work
+  stateDirectory: .merkle
+
+languages:
+  golang:
+    profile: deep
+```
+
 The parser rejects unknown fields, duplicate fields, tabs, inline collections, and unsupported values. Copy [`examples/merkle.yml`](examples/merkle.yml) if you prefer to start from the checked-in example.
 
 ## Plan without executing tests
@@ -142,6 +155,12 @@ merkle plan \
 
 `plan` never builds or executes tests. It writes the terminal report to standard output and diagnostics to standard error.
 
+Use the same command shape for Go:
+
+```bash
+merkle plan --base main --head WORKTREE --languages go:deep
+```
+
 ## Observe tests
 
 `observe` builds by default, discovers the test catalog, and runs each discovered test serially with the startup-hook observer:
@@ -155,6 +174,18 @@ merkle observe \
 ```
 
 Observation records complete assembly/project evidence. Member execution, reflection-only resolution, native code, child processes, assemblies loaded before the hook, and unmatched runner identities remain visible blind spots.
+
+For Go, observation runs the discovered tests serially and admits only nonempty file-level cover profiles:
+
+```bash
+merkle observe \
+  --base main \
+  --head HEAD \
+  --languages golang:deep \
+  --timeout-ms 120000
+```
+
+Go subtests remain attached to their parent catalog entry. Interface dispatch, reflection, generated code, plugins, subprocesses, cgo/native code, build tags, and uninstrumented packages remain reported blind spots.
 
 Use `--no-build` only after a compatible Merkle build has produced the exact artifact manifest for the same snapshot, solution, configuration, platform, and adapter version.
 

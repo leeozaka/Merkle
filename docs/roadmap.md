@@ -11,7 +11,7 @@ The roadmap follows technical risk and learning value. Phases 0–5 have a worki
 - Prove package-free .NET observation before selecting the core implementation language.
 - Treat deterministic identity, reports, and adapter contracts as compatibility surfaces.
 - Gather full-suite calibration evidence before enabling automatic selected-versus-full decisions.
-- Add a second official language only after user demand and maintainer capacity are demonstrated.
+- Keep first-party language support within the documented .NET and Go capability boundaries.
 
 ```mermaid
 flowchart LR
@@ -64,7 +64,7 @@ flowchart LR
 
 - No probability-based omission.
 - No hosted state service.
-- No second official adapter.
+- No additional first-party adapter beyond .NET and Go.
 - No multi-solution orchestration.
 - No detached or parallel deep observation.
 
@@ -142,7 +142,7 @@ flowchart LR
 - Stable adapter SDK/protocol and public conformance suite.
 - Signed/self-contained release packaging for supported macOS/Linux architectures.
 - Untrusted-fork credential guidance.
-- A recorded decision to defer a Go adapter, detached observation, and parallel observation.
+- A recorded decision to support Go as a first-party adapter while retaining detached and parallel observation as deferred.
 
 ### Exit criteria
 
@@ -159,7 +159,6 @@ flowchart LR
 - Detached local observation.
 - Historyless/snapshot-manifest repositories.
 - Automated repository dependency provisioning.
-- First-party Go adapter.
 - Cross-repository impact graphs.
 - A hosted Merkle service.
 

@@ -26,6 +26,9 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v7
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: src/adapters/go/worker/go.mod
       - uses: actions/setup-dotnet@v6
         with:
           dotnet-version: |
@@ -42,6 +45,10 @@ jobs:
           artifacts/merkle-${{ matrix.rid }}/Merkle.Cli --help
           test -f artifacts/merkle-${{ matrix.rid }}/workers/dotnet/Merkle.Adapters.DotNet.Worker.dll
           test -f artifacts/merkle-${{ matrix.rid }}/workers/dotnet/Merkle.Adapters.DotNet.Observer.dll
+          test -x artifacts/merkle-${{ matrix.rid }}/workers/go/merkle-adapter-go
+          printf '%s' '{"protocolVersion":"1.0","requestId":"smoke","operation":"describe","payload":{}}' \
+            | artifacts/merkle-${{ matrix.rid }}/workers/go/merkle-adapter-go \
+            | grep -q '"language":"golang"'
       - name: Package
         shell: bash
         run: |

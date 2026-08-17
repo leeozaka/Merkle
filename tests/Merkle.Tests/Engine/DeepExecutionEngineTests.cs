@@ -13,6 +13,37 @@ namespace Merkle.Tests.Engine;
 public sealed class DeepExecutionEngineTests
 {
     [Fact]
+    public async Task Observe_RoutesToSelectedLanguageAdapterAndPublishesItsHistoryDescriptor()
+    {
+        var state = new State();
+        var dotnet = new DeepAdapter();
+        var golang = new DeepAdapter { Language = "golang", PlanIdentity = "go:test" };
+        var report = await Engine(new GoSnapshots(), state, dotnet, golang).ExecuteAsync(
+            Request(DeepExecutionMode.Observe, language: "golang"),
+            default);
+
+        Assert.Equal(TerminalStatus.Succeeded, report.TerminalStatus);
+        Assert.Equal(0, dotnet.PrepareCalls);
+        Assert.Equal(1, golang.PrepareCalls);
+        Assert.Contains("/golang", Assert.Single(state.History).Compatibility.AdapterIdentity, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task Observe_MissingDeepCapabilityFailsBeforeBuildPreparation()
+    {
+        var state = new State();
+        var adapter = new DeepAdapter
+        {
+            Capabilities = [AdapterCapability.Detect, AdapterCapability.Index, AdapterCapability.Map, AdapterCapability.Discover]
+        };
+
+        var report = await Engine(adapter, state).ExecuteAsync(Request(DeepExecutionMode.Observe), default);
+
+        Assert.Equal("CapabilityUnavailable", report.ErrorCode);
+        Assert.Equal(0, adapter.PrepareCalls);
+    }
+
+    [Fact]
     public async Task Observe_PublishesCompleteHistoryAndObservedUnits()
     {
         var state = new State();
@@ -55,12 +86,12 @@ public sealed class DeepExecutionEngineTests
         var adapter = new PlanningOnlyAdapter();
         var engine = new DeepExecutionEngine(
             new ImpactEngine(new Snapshots(), LanguageDetector.CreateDefault(), new AdapterRegistry([adapter]), state, FixedTime.Instance, "repo"),
-            new Snapshots(), adapter, state, FixedTime.Instance);
+            new Snapshots(), new AdapterRegistry([adapter]), state, FixedTime.Instance);
 
         var report = await engine.ExecuteAsync(Request(DeepExecutionMode.Observe), default);
 
         Assert.Equal(TerminalStatus.Failed, report.TerminalStatus);
-        Assert.Equal("DeepToolchainUnavailable", report.ErrorCode);
+        Assert.Equal("CapabilityUnavailable", report.ErrorCode);
         Assert.NotNull(state.Report);
     }
 
@@ -71,7 +102,7 @@ public sealed class DeepExecutionEngineTests
         var adapter = new ExecutingAdapterWithoutResolver();
         var engine = new DeepExecutionEngine(
             new ImpactEngine(new Snapshots(), LanguageDetector.CreateDefault(), new AdapterRegistry([adapter]), state, FixedTime.Instance, "repo"),
-            new Snapshots(), adapter, state, FixedTime.Instance);
+            new Snapshots(), new AdapterRegistry([adapter]), state, FixedTime.Instance);
 
         var report = await engine.ExecuteAsync(
             Request(DeepExecutionMode.RunSelected, new PolicyConfiguration(0, 0, "plan-only", UnmappedBehavior.Warn)),
@@ -79,6 +110,25 @@ public sealed class DeepExecutionEngineTests
 
         Assert.Equal("DeepToolchainUnavailable", report.ErrorCode);
         Assert.Equal(0, adapter.PrepareCalls);
+    }
+
+    [Fact]
+    public async Task RunSelected_FullSuiteDoesNotRequireSelectedTestResolver()
+    {
+        var state = new State { SeedHistory = true };
+        var adapter = new ExecutingAdapterWithoutResolver();
+        var engine = new DeepExecutionEngine(
+            new ImpactEngine(new Snapshots(), LanguageDetector.CreateDefault(), new AdapterRegistry([adapter]), state, FixedTime.Instance, "repo"),
+            new Snapshots(), new AdapterRegistry([adapter]), state, FixedTime.Instance);
+
+        var report = await engine.ExecuteAsync(
+            Request(DeepExecutionMode.RunSelected, new PolicyConfiguration(30, 1, "full-suite", UnmappedBehavior.Warn)),
+            default);
+
+        Assert.Equal(PlanRecommendation.FullSuite, report.Policy.Recommendation);
+        Assert.Equal(TerminalStatus.Succeeded, report.TerminalStatus);
+        Assert.Equal(1, adapter.PrepareCalls);
+        Assert.Equal("test:a", Assert.Single(adapter.LastSelected).Identity);
     }
 
     [Fact]
@@ -166,7 +216,7 @@ public sealed class DeepExecutionEngineTests
         Assert.Equal(TerminalStatus.Succeeded, report.TerminalStatus);
         var selected = Assert.Single(adapter.LastSelected);
         Assert.Equal(identity, selected.Identity);
-        Assert.Equal("tests/Merkle.Tests/Merkle.Tests.csproj", selected.ProjectPath);
+        Assert.Equal("tests/Merkle.Tests/Merkle.Tests.csproj", selected.ExecutionScope);
         Assert.Equal("Merkle.Tests.Planning.PlanPolicyTests.RecommendationsAreExplicit", selected.Selector);
     }
 
@@ -277,7 +327,7 @@ public sealed class DeepExecutionEngineTests
         var adapter = new DeepAdapter();
         var engine = new DeepExecutionEngine(
             new ImpactEngine(new Snapshots(), LanguageDetector.CreateDefault(), new AdapterRegistry([adapter]), state, FixedTime.Instance, "repo"),
-            new Snapshots(), adapter, state, FixedTime.Instance);
+            new Snapshots(), new AdapterRegistry([adapter]), state, FixedTime.Instance);
 
         var report = await engine.ExecuteAsync(Request(DeepExecutionMode.Observe), default);
 
@@ -293,25 +343,51 @@ public sealed class DeepExecutionEngineTests
         var adapter = new DeepAdapter();
         var planner = new ImpactEngine(snapshots, LanguageDetector.CreateDefault(), new AdapterRegistry([adapter]), state, FixedTime.Instance, "repo");
 
-        Assert.Throws<ArgumentNullException>(() => new DeepExecutionEngine(null!, snapshots, adapter, state, FixedTime.Instance));
-        Assert.Throws<ArgumentNullException>(() => new DeepExecutionEngine(planner, null!, adapter, state, FixedTime.Instance));
+        var registry = new AdapterRegistry([adapter]);
+        Assert.Throws<ArgumentNullException>(() => new DeepExecutionEngine(null!, snapshots, registry, state, FixedTime.Instance));
+        Assert.Throws<ArgumentNullException>(() => new DeepExecutionEngine(planner, null!, registry, state, FixedTime.Instance));
         Assert.Throws<ArgumentNullException>(() => new DeepExecutionEngine(planner, snapshots, null!, state, FixedTime.Instance));
-        Assert.Throws<ArgumentNullException>(() => new DeepExecutionEngine(planner, snapshots, adapter, null!, FixedTime.Instance));
-        Assert.Throws<ArgumentNullException>(() => new DeepExecutionEngine(planner, snapshots, adapter, state, null!));
+        Assert.Throws<ArgumentNullException>(() => new DeepExecutionEngine(planner, snapshots, registry, null!, FixedTime.Instance));
+        Assert.Throws<ArgumentNullException>(() => new DeepExecutionEngine(planner, snapshots, registry, state, null!));
     }
 
-    private static DeepExecutionEngine Engine(DeepAdapter adapter, State state) => new(
-        new ImpactEngine(new Snapshots(), LanguageDetector.CreateDefault(), new AdapterRegistry([adapter]), state, FixedTime.Instance, "repo"),
-        new Snapshots(), adapter, state, FixedTime.Instance);
+    private static DeepExecutionEngine Engine(DeepAdapter adapter, State state) =>
+        Engine(new Snapshots(), state, adapter);
 
-    private static DeepExecutionRequest Request(DeepExecutionMode mode, PolicyConfiguration? policy = null) => new(
-        new PlanRequest("main", "HEAD", [new LanguageSelection("dotnet", "minimal")], false, null, policy), mode, false, null, ".merkle");
+    private static DeepExecutionEngine Engine(ISnapshotSource snapshots, State state, params DeepAdapter[] adapters)
+    {
+        var registry = new AdapterRegistry(adapters);
+        return new DeepExecutionEngine(
+            new ImpactEngine(snapshots, LanguageDetector.CreateDefault(), registry, state, FixedTime.Instance, "repo"),
+            snapshots,
+            registry,
+            state,
+            FixedTime.Instance);
+    }
+
+    private static DeepExecutionRequest Request(
+        DeepExecutionMode mode,
+        PolicyConfiguration? policy = null,
+        string language = "dotnet") => new(
+        new PlanRequest("main", "HEAD", [new LanguageSelection(language, "deep")], false, null, policy), mode, false, null, ".merkle");
 
     private sealed class Snapshots : ISnapshotSource
     {
         public ValueTask<SnapshotPair> BindAsync(string? baselineReference, string? candidateReference, CancellationToken cancellationToken) =>
             ValueTask.FromResult(new SnapshotPair(Snapshot("base", "old"), Snapshot("head", "new")));
         private static RepositorySnapshot Snapshot(string id, string hash) => new(new SnapshotIdentity(id, id, "git"), "/repo", "repo", [new SnapshotFile("src/App.cs", hash, [1])]);
+    }
+
+    private sealed class GoSnapshots : ISnapshotSource
+    {
+        public ValueTask<SnapshotPair> BindAsync(string? baselineReference, string? candidateReference, CancellationToken cancellationToken) =>
+            ValueTask.FromResult(new SnapshotPair(Snapshot("base", "old"), Snapshot("head", "new")));
+
+        private static RepositorySnapshot Snapshot(string id, string hash) => new(
+            new SnapshotIdentity(id, id, "git"),
+            "/repo",
+            "repo",
+            [new SnapshotFile("main.go", hash, [1])]);
     }
 
     private sealed class DeepAdapter : ILanguageAdapter, IBuildPreparer, ITestDiscoverer, ISelectedTestResolver, ISelectedTestExecutor, ITestObserver
@@ -325,13 +401,16 @@ public sealed class DeepExecutionEngineTests
         public string PlanDisplayName { get; init; } = "A(1)";
         public bool ResolveSingleFallback { get; init; } = true;
         public string ProtocolVersion { get; init; } = "1.0";
+        public string Language { get; init; } = "dotnet";
+        public IReadOnlyCollection<AdapterCapability> Capabilities { get; init; } =
+            [AdapterCapability.Detect, AdapterCapability.Index, AdapterCapability.Map, AdapterCapability.Discover, AdapterCapability.Observe, AdapterCapability.Execute];
         public TestOutcome Outcome { get; init; } = TestOutcome.Passed;
         public TimeSpan? Duration { get; init; } = TimeSpan.FromMilliseconds(4);
         public ObservationCompleteness Completeness { get; init; } = ObservationCompleteness.Complete;
         public IReadOnlyList<string> ScopeWarnings { get; init; } = [];
         public IReadOnlyList<TestCatalogEntry>? RuntimeCatalog { get; init; }
         public IReadOnlyList<TestCatalogEntry> LastSelected { get; private set; } = [];
-        public AdapterDescriptor Describe() => new(ProtocolVersion, "dotnet", "test", "1", "1", "1", [AdapterCapability.Detect, AdapterCapability.Index, AdapterCapability.Map, AdapterCapability.Discover, AdapterCapability.Observe, AdapterCapability.Execute], ["minimal"]);
+        public AdapterDescriptor Describe() => new(ProtocolVersion, Language, "test", "1", "1", "1", Capabilities, ["minimal", "deep"]);
         public ValueTask<AdapterIndex> IndexAsync(AdapterIndexRequest request, CancellationToken cancellationToken)
         {
             var unit = new SourceUnit("unit:a", SourceUnitKind.File, "src/App.cs", request.Snapshot.Files[0].ContentHash, "");
@@ -422,6 +501,7 @@ public sealed class DeepExecutionEngineTests
     private sealed class ExecutingAdapterWithoutResolver : ILanguageAdapter, IBuildPreparer, ITestDiscoverer, ISelectedTestExecutor
     {
         public int PrepareCalls { get; private set; }
+        public IReadOnlyList<TestCatalogEntry> LastSelected { get; private set; } = [];
         public AdapterDescriptor Describe() => new("1.0", "dotnet", "test", "1", "1", "1", [AdapterCapability.Detect, AdapterCapability.Index, AdapterCapability.Map, AdapterCapability.Discover, AdapterCapability.Execute], ["minimal", "deep"]);
         public ValueTask<AdapterIndex> IndexAsync(AdapterIndexRequest request, CancellationToken cancellationToken)
         {
@@ -437,8 +517,12 @@ public sealed class DeepExecutionEngineTests
         }
         public ValueTask<DiscoveryCatalog> DiscoverAsync(DeepAdapterContext context, BuildFingerprint fingerprint, CancellationToken cancellationToken) =>
             ValueTask.FromResult(new DiscoveryCatalog(fingerprint, [new TestCatalogEntry("test:a", "A()", "xunit", "App.csproj", "A")], []));
-        public ValueTask<IReadOnlyList<TestExecutionResult>> ExecuteAsync(SelectedExecutionRequest request, CancellationToken cancellationToken) =>
-            ValueTask.FromResult<IReadOnlyList<TestExecutionResult>>([]);
+        public ValueTask<IReadOnlyList<TestExecutionResult>> ExecuteAsync(SelectedExecutionRequest request, CancellationToken cancellationToken)
+        {
+            LastSelected = request.Tests;
+            return ValueTask.FromResult<IReadOnlyList<TestExecutionResult>>(
+                [.. request.Tests.Select(test => new TestExecutionResult(test.Identity, TestOutcome.Passed, TimeSpan.Zero))]);
+        }
     }
 
     private sealed class State : IStateStore, IStatePublicationStore, IHistoryStore

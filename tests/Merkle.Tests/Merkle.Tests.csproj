@@ -29,6 +29,7 @@
     <ProjectReference Include="../../src/core/Merkle.Core.csproj" />
     <ProjectReference Include="../../src/infrastructure/Merkle.Infrastructure.csproj" />
     <ProjectReference Include="../../src/adapters/dotnet/Merkle.Adapters.DotNet.csproj" />
+    <ProjectReference Include="../../src/adapters/go/host/Merkle.Adapters.Go.csproj" />
     <ProjectReference Include="../../src/cli/Merkle.Cli.csproj" />
   </ItemGroup>
 

@@ -22,6 +22,16 @@ public sealed class CommandLineParserTests
     }
 
     [Fact]
+    public void ParsePlan_NormalizesGoLanguageAlias()
+    {
+        var command = Assert.IsType<PlanCommand>(new CommandLineParser().Parse([
+            "plan", "--languages", "go:deep"
+        ]));
+
+        Assert.Equal([new LanguageSelection("golang", "deep")], command.Languages);
+    }
+
+    [Fact]
     public void ParseStateReset_RequiresLocalSafetyFlag()
     {
         var error = Assert.Throws<ConfigurationException>(() =>

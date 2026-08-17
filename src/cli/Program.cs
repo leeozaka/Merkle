@@ -1,6 +1,7 @@
 using System.Security.Cryptography;
 using System.Text;
 using Merkle.Adapters.DotNet;
+using Merkle.Adapters.Go;
 using Merkle.Cli;
 using Merkle.Core.Adapters;
 using Merkle.Core.Configuration;
@@ -100,17 +101,35 @@ if (javaAdapter is not null)
     adapters.Add(javaAdapter);
 }
 
+var goAdapterPath = FindArtifact(
+    repositoryRoot,
+    "MERKLE_GO_ADAPTER",
+    "merkle-adapter-go",
+    "adapters/go/worker");
+if (goAdapterPath is not null)
+{
+    var goAnalysisAdapter = new ProcessLanguageAdapter(
+        processRunner,
+        new ProcessLanguageAdapterOptions(goAdapterPath, [], repositoryRoot));
+    adapters.Add(new GoAdapter(goAnalysisAdapter, new GoDeepOperations(processRunner)));
+}
+
+var adapterRegistry = new AdapterRegistry(adapters);
 var engine = new ImpactEngine(
     snapshotSource,
     LanguageDetector.CreateDefault(),
-    new AdapterRegistry(adapters),
+    adapterRegistry,
     stateStore,
     TimeProvider.System,
     repositoryIdentity,
     redactor: redactor);
-IDeepExecutionEngine? deepEngine = deepOperations is null
-    ? null
-    : new DeepExecutionEngine(engine, snapshotSource, adapter, stateStore, TimeProvider.System, redactor);
+IDeepExecutionEngine deepEngine = new DeepExecutionEngine(
+    engine,
+    snapshotSource,
+    adapterRegistry,
+    stateStore,
+    TimeProvider.System,
+    redactor);
 var application = new CliApplication(
     engine,
     stateStore,
@@ -147,9 +166,11 @@ static string? FindArtifact(string repositoryRoot, string environmentVariable, s
     {
         configured,
         Path.Combine(AppContext.BaseDirectory, "workers", "dotnet", fileName),
+        Path.Combine(AppContext.BaseDirectory, "workers", "go", fileName),
         Path.Combine(AppContext.BaseDirectory, fileName),
         Path.Combine(repositoryRoot, "src", "adapters", "python", fileName),
         Path.Combine(repositoryRoot, "src", "adapters", "java", "target", fileName),
+        Path.Combine(repositoryRoot, "src", "adapters", "go", "worker", fileName),
         Path.Combine(repositoryRoot, "src", projectName, "bin", "Debug", projectName.EndsWith("Observer", StringComparison.Ordinal) ? "net8.0" : "net10.0", fileName),
         Path.Combine(repositoryRoot, "src", projectName, "bin", "Release", projectName.EndsWith("Observer", StringComparison.Ordinal) ? "net8.0" : "net10.0", fileName)
     };

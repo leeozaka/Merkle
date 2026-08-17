@@ -1,7 +1,7 @@
 # Product specification
 
 Status: Adopted schema 1 specification  
-Applies to: Initial Merkle CLI and official .NET adapter  
+Applies to: Initial Merkle CLI and official .NET and Go adapters
 Related: [System design](system-design.md), [domain context](../CONTEXT.md), [implementation guide](implementation-guide.md)
 
 The words **must**, **should**, and **may** are normative. **Accepted**, **Proposed**, and **Deferred** labels keep suggestions from becoming accidental guarantees.
@@ -37,7 +37,7 @@ sequenceDiagram
 | Local comparison | Accepted | Permit explicit/configured branch, commit, or frozen working-tree candidates. |
 | Languages | Accepted | Mixed-language repositories require explicit selections and list detections when missing. |
 | Official adapter | Accepted | Provide a deep adapter for .NET 6+. |
-| Second official adapter | Deferred | Go may be evaluated; none is promised. TypeScript is excluded. |
+| Go adapter | Accepted | First-party deep adapter; canonical language identifier is `golang`, with `go` accepted as a CLI alias. |
 | Solutions | Accepted | Support exactly one .NET solution initially; ambiguity is an error. |
 | Operating systems | Accepted | Support macOS and Linux; WSL is best-effort; native Windows is out of scope. |
 | State service | Accepted | No hosted service is provided. Team-owned remote storage is optional. |
@@ -93,6 +93,15 @@ See [Adapter authoring](adapter-authoring.md) for protocol 1.0.
 - **D-010:** A test failure caused by an external dependency is an ordinary test failure. Environment provisioning is outside Merkle.
 - **D-011:** No timeout is imposed unless `--timeout-ms` or `timeoutMs` is explicitly configured.
 - **D-012:** Crossing an expected runtime mean alone must not stop, fail, or broaden a run.
+
+## 6a. Go deep adapter requirements
+
+- **G-001:** The official adapter must require Go 1.22 or newer for source builds and invoke the repository's system `go` toolchain.
+- **G-002:** The worker must use the versioned process protocol for `detect`, `index`, and `map`; the host must provide build, discovery, execution, and observation operations.
+- **G-003:** Build and discovery must support `go.mod`, nested modules, and `go.work` module scopes with deterministic selection and explicit ambiguity errors.
+- **G-004:** Go source and test identities must be deterministic and use the canonical `golang` namespace.
+- **G-005:** No-build validation must reject missing, stale, or incompatible manifests and artifacts.
+- **G-006:** Observation must preserve immutable snapshot/fingerprint boundaries and disclose runtime-only subtests, file-level coverage, standard-library coverage, reflection/dynamic behavior, generated code, plugins, subprocesses, cgo/native code, and build-tag limits.
 
 ADR-0016 selects a managed startup hook. Observation is complete only at assembly/project granularity and must report the member, reflection, native, child-process, pre-hook-load, and identity-correlation blind spots.
 

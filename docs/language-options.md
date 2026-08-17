@@ -4,7 +4,7 @@ Status: historical analysis; superseded for core selection by [ADR-0015](adr/001
 Research date: 2026-08-07  
 Target operating systems: macOS and Linux; WSL may work but is not a supported target  
 Initial language adapter: .NET 6 and later  
-Potential second official adapter: Go  
+First-party second adapter: Go
 Explicitly out of the current official-adapter scope: TypeScript/Node.js
 
 ## 1. Accepted direction and validation result
@@ -189,13 +189,13 @@ Go's standard `os/exec` invokes external programs without automatically invoking
 
 The `modernc.org/sqlite` driver documents a CGo-free SQLite port and current Darwin/Linux architecture support. It reduces native-build friction for the core, but it is a substantial generated dependency that still needs supply-chain, size, and performance review. [modernc.org/sqlite package documentation](https://pkg.go.dev/modernc.org/sqlite)
 
-The standard Go tool builds executable commands, emits JSON for machine processing, tests packages, and exposes build/test caching and coverage. A later official Go adapter can call those commands directly. [Go command reference](https://pkg.go.dev/cmd/go)
+The standard Go tool builds executable commands, emits JSON for machine processing, tests packages, and exposes build/test caching and coverage. The first-party Go adapter calls those commands through its host boundary. [Go command reference](https://pkg.go.dev/cmd/go)
 
 ### Strengths
 
 - Simple native deployment for a small CLI and background analyzer.
 - Fast startup and straightforward concurrency for indexing and adapter orchestration.
-- A second official Go adapter could reuse the core runtime and standard toolchain.
+- The first-party Go adapter reuses the core runtime boundary and standard toolchain.
 - The language is approachable to systems and application contributors.
 
 ### Costs in this project
@@ -212,7 +212,7 @@ Choose Go for the core if the spike demonstrates all of the following:
 - core distribution size/startup is a binding product requirement;
 - the process protocol can express .NET symbols, evidence, and failures without leaky abstractions;
 - the team accepts maintaining three implementation surfaces from v1;
-- a Go adapter is committed for the next roadmap phase rather than merely possible.
+- the Go adapter remains behind its documented capability and platform boundary.
 
 ## 8. Option C: Rust
 
@@ -444,7 +444,7 @@ Implement a small protocol probe that:
 - propagates cancellation, timeouts, logs, and structured errors;
 - measures cold start, throughput, memory, and diagnostic fidelity.
 
-Write the probe in Go because Go is the likely second official adapter and a credible core candidate. If the protocol adds little operational cost and the product strongly values a native core, promote Go to a full decision candidate. Otherwise keep the C# core and reuse the protocol for external adapters only.
+The existing Go worker is the protocol probe and the first-party adapter implementation. Keep the C# core and use the process boundary for Go toolchain operations; reconsider the core language only through a new ADR.
 
 ### Profiler language spike
 

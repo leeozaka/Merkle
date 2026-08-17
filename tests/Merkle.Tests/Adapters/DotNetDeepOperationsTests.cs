@@ -246,7 +246,7 @@ public sealed class DotNetDeepOperationsTests : IDisposable
             [catalog]).Tests);
 
         Assert.Equal(identity, resolved.Identity);
-        Assert.Equal(project, resolved.ProjectPath);
+        Assert.Equal(project, resolved.ExecutionScope);
         Assert.Equal(selector, resolved.Selector);
     }
 

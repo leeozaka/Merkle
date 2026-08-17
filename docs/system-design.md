@@ -870,7 +870,7 @@ Exit: contributors can add adapters without linking to core internals, and CI us
 2. **Stable clustering of multi-unit changes.** Schema 1 correlation-caps each run but does not infer change clusters.
 3. **Cross-runner timing normalization.** Compatibility keys separate configuration/platform families; hardware-class normalization remains deferred.
 4. **Background and parallel execution.** Detached lifecycle and concurrency-safe attribution need separate ADRs.
-5. **Later official language adapter.** Go remains a candidate; no second adapter is promised.
+5. **Additional official language adapters.** Go is accepted as a first-party deep adapter by [ADR-0017](adr/0017-first-party-go-deep-adapter.md); further adapters require their own ADR.
 6. **Multiple solutions, native Windows, historyless repositories, cross-repository graphs, and a hosted service.** These remain outside schema 1.
 
 ## 24. ADR inventory
@@ -913,7 +913,7 @@ ADR-0015 selects C# on .NET 10 with Native AOT for the core. Semantic analysis, 
 | Candidate | Relative V1 effort | Main advantage | Main cost | Current recommendation |
 |---|---|---|---|---|
 | C#/.NET | Medium; lowest for deep .NET | Roslyn, test-platform, planner, and CLI share one ecosystem | Uses managed worker/observer companions beside the AOT CLI | Accepted core toolchain |
-| Go | High for deep .NET | Simple native CLI distribution and a natural later Go adapter | Requires Go core, C# semantic sidecar, and native profiler immediately | Retained as historical alternative and possible future adapter |
+| Go | High for deep .NET | Simple native CLI distribution and a first-party Go toolchain boundary | Requires Go core, C# semantic sidecar, and native profiler if used as the core | First-party adapter; not the core toolchain |
 | Rust | Very high | Strong native indexing and profiler potential | C# adapter still required; ABI/unsafe and contributor burden are higher | Consider for profiler or later optimized core |
 | Python | Medium to prototype; high to harden | Low-friction statistics and contract experiments | Production packaging and deep .NET remain multi-runtime | Use for model experiments, not default core |
 | JVM/Kotlin | High | Mature tooling and contributor pool | Adds a managed runtime with no .NET integration advantage | Future adapter ecosystem, not V1 core |

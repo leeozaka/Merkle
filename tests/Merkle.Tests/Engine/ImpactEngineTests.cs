@@ -33,6 +33,25 @@ public sealed class ImpactEngineTests
     }
 
     [Fact]
+    public async Task Plan_GoSelectionDoesNotReportDotNetOnlyDiscoveryLimitation()
+    {
+        var events = new List<string>();
+        var engine = new ImpactEngine(
+            new RecordingSnapshotSource(events, ["go.mod", "calc.go"]),
+            LanguageDetector.CreateDefault(),
+            new AdapterRegistry([new RecordingAdapter(events, "golang")]),
+            new RecordingStateStore(events),
+            TimeProvider.System);
+
+        var result = await engine.PlanAsync(new PlanRequest(
+            "main", "HEAD", [new LanguageSelection("golang", "minimal")],
+            false, null), default);
+
+        Assert.DoesNotContain(result.Warnings, warning =>
+            warning.Contains(".NET test targets", StringComparison.Ordinal));
+    }
+
+    [Fact]
     public async Task Plan_MixedRepositoryPublishesFailureWithEveryDetection()
     {
         var events = new List<string>();
@@ -119,17 +138,18 @@ public sealed class ImpactEngineTests
         }
     }
 
-    private sealed class RecordingAdapter(List<string> events) : ILanguageAdapter
+    private sealed class RecordingAdapter(List<string> events, string language = "dotnet") : ILanguageAdapter
     {
         public AdapterDescriptor Describe() => new(
-            "1.0", "dotnet", "merkle", "0.1.0", "1", "1",
+            "1.0", language, "merkle", "0.1.0", "1", "1",
             [AdapterCapability.Detect, AdapterCapability.Index, AdapterCapability.Map], ["minimal"]);
 
         public ValueTask<AdapterIndex> IndexAsync(AdapterIndexRequest request, CancellationToken cancellationToken)
         {
             events.Add($"index:{request.Snapshot.Identity.Value}");
-            var unit = new SourceUnit("dotnet:file:src/App.cs", SourceUnitKind.File,
-                "src/App.cs", request.Snapshot.Files[0].ContentHash, string.Empty);
+            var path = request.Snapshot.Files[0].Path;
+            var unit = new SourceUnit($"{language}:file:{path}", SourceUnitKind.File,
+                path, request.Snapshot.Files[0].ContentHash, string.Empty);
             return ValueTask.FromResult(new AdapterIndex([unit], [], []));
         }
 

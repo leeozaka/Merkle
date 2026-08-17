@@ -106,7 +106,7 @@ public sealed class CliApplication
                             observe.Solution,
                             new PolicyConfiguration(0, 0, "full-suite", UnmappedBehavior.Warn),
                             deepDefault: true);
-                    EnsureDeepDotNet(planRequest.Languages);
+                    EnsureDeepSelection(planRequest.Languages);
                     var report = await engine.ExecuteAsync(new DeepExecutionRequest(
                         planRequest,
                         DeepExecutionMode.Observe,
@@ -131,7 +131,7 @@ public sealed class CliApplication
                             run.Solution,
                             policy,
                             deepDefault: true);
-                    EnsureDeepDotNet(planRequest.Languages);
+                    EnsureDeepSelection(planRequest.Languages);
                     var report = await engine.ExecuteAsync(new DeepExecutionRequest(
                         planRequest,
                         DeepExecutionMode.RunSelected,
@@ -226,15 +226,14 @@ public sealed class CliApplication
         return current;
     }
 
-    private static void EnsureDeepDotNet(IReadOnlyList<LanguageSelection> languages)
+    private static void EnsureDeepSelection(IReadOnlyList<LanguageSelection> languages)
     {
         if (languages.Count != 1 ||
-            !StringComparer.Ordinal.Equals(languages[0].Language, "dotnet") ||
             !StringComparer.Ordinal.Equals(languages[0].Profile, "deep"))
         {
             throw new CapabilityException(
                 "DeepProfileRequired",
-                "Observe and run require exactly one 'dotnet:deep' language selection.");
+                "Observe and run require exactly one '<language>:deep' language selection.");
         }
     }
 
@@ -303,7 +302,7 @@ public sealed class CliApplication
 
     private static CapabilityException DeepUnavailable() => new(
         "DeepToolchainUnavailable",
-        "The deep .NET worker and startup-hook observer are not available in this installation.");
+        "The deep execution toolchain is not available in this installation.");
 
     private static int ExitCode(ErrorClass errorClass) => errorClass switch
     {
@@ -321,7 +320,7 @@ public sealed class CliApplication
 
         merkle plan --base <ref> --head <ref|WORKTREE>
                     [--languages <language:profile,...>]
-                    [--format text|json] [--pedantic]
+                    [--format text|json] [--pedantic] [--solution <path>]
         merkle observe [plan options] [--no-build] [--timeout-ms <milliseconds>]
         merkle run [plan options] [--no-build] [--timeout-ms <milliseconds>]
         merkle state status

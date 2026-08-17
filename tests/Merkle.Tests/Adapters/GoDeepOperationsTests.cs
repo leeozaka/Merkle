@@ -1,3 +1,4 @@
+using System.ComponentModel;
 using System.Security.Cryptography;
 using System.Text;
 using Merkle.Adapters.Go;
@@ -49,6 +50,34 @@ public sealed class GoDeepOperationsTests : IDisposable
 
         Assert.Equal(prepared.Fingerprint.Value, noBuild.Fingerprint.Value);
         Assert.Empty(noBuild.Warnings);
+
+        var manifest = Assert.Single(Directory.GetFiles(Path.Combine(_root, "state", "fingerprints"), "*.manifest.json"));
+        var contents = await File.ReadAllTextAsync(manifest);
+        await File.WriteAllTextAsync(manifest, contents.Replace(
+            prepared.Fingerprint.Value,
+            new string('0', prepared.Fingerprint.Value.Length),
+            StringComparison.Ordinal));
+        var incompatible = await Assert.ThrowsAsync<AnalysisException>(() =>
+            operations.PrepareBuildAsync(new BuildPreparationRequest(context, NoBuild: true), default).AsTask());
+        Assert.Equal("ArtifactsUnavailable", incompatible.Code);
+    }
+
+    [Fact]
+    public async Task PrepareBuild_SeparatesArtifactsAcrossEffectiveBuildConfigurations()
+    {
+        var snapshot = Snapshot("go.mod", "module example.test\n\ngo 1.22\n", "example.go", Source("example"), "example_test.go", TestSource("example"));
+        var debug = Context(snapshot);
+        var release = debug with { Configuration = "Release" };
+        var operations = new GoDeepOperations(GoRunner(snapshot, createArtifacts: true));
+
+        var debugBuild = await operations.PrepareBuildAsync(new BuildPreparationRequest(debug), default);
+        var releaseBuild = await operations.PrepareBuildAsync(new BuildPreparationRequest(release), default);
+
+        Assert.NotEqual(
+            Assert.Single(debugBuild.Fingerprint.Artifacts).ArtifactPath,
+            Assert.Single(releaseBuild.Fingerprint.Artifacts).ArtifactPath);
+        var reusedDebug = await operations.PrepareBuildAsync(new BuildPreparationRequest(debug, NoBuild: true), default);
+        Assert.Equal(debugBuild.Fingerprint.Value, reusedDebug.Fingerprint.Value);
     }
 
     [Fact]
@@ -72,6 +101,10 @@ public sealed class GoDeepOperationsTests : IDisposable
         var malformed = new GoDeepOperations(GoRunner(snapshot, listOutput: "TestAlpha\nnot-json-go-list-noise\n"));
         var malformedError = await Assert.ThrowsAsync<AnalysisException>(() => malformed.DiscoverAsync(context, fingerprint, default).AsTask());
         Assert.Equal("TestDiscoveryFailed", malformedError.Code);
+
+        var packageListFailure = new GoDeepOperations(GoRunner(snapshot, listExitCode: 1, listError: "module resolution failed"));
+        var listError = await Assert.ThrowsAsync<AnalysisException>(() => packageListFailure.DiscoverAsync(context, fingerprint, default).AsTask());
+        Assert.Equal("TestDiscoveryFailed", listError.Code);
     }
 
     [Theory]
@@ -131,6 +164,25 @@ public sealed class GoDeepOperationsTests : IDisposable
     }
 
     [Fact]
+    public async Task Execute_PackageInitializationCrashIsATestCrashNotACompilationFailure()
+    {
+        var snapshot = Snapshot("go.mod", "module example.test\n\ngo 1.22\n", "example.go", Source("example"));
+        var runner = GoRunner(
+            snapshot,
+            executionOutput: _ => "{\"Action\":\"start\",\"Package\":\"example.test\"}\n{\"Action\":\"output\",\"Package\":\"example.test\",\"Output\":\"panic in init\"}\n{\"Action\":\"fail\",\"Package\":\"example.test\"}\n",
+            executionExitCode: 1,
+            executionError: "test binary exited");
+
+        var result = await new GoDeepOperations(runner).ExecuteAsync(
+            new SelectedExecutionRequest(Context(snapshot), Fingerprint("example.test", CreateArtifact()), [Test("TestAlpha")]),
+            default);
+
+        var execution = Assert.Single(result);
+        Assert.Equal(TestOutcome.Crashed, execution.Outcome);
+        Assert.Contains("test binary exited", execution.Diagnostics, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public async Task Execute_RejectsMissingOrTamperedArtifacts()
     {
         var snapshot = Snapshot("go.mod", "module example.test\n\ngo 1.22\n", "example.go", Source("example"));
@@ -144,6 +196,36 @@ public sealed class GoDeepOperationsTests : IDisposable
         var tampered = Fingerprint("example.test", new BuildArtifact("example.test", path, null, "not-the-file-hash", null));
         var hashError = await Assert.ThrowsAsync<AnalysisException>(() => new GoDeepOperations(GoRunner(snapshot)).ExecuteAsync(new SelectedExecutionRequest(context, tampered, [test]), default).AsTask());
         Assert.Equal("ArtifactsUnavailable", hashError.Code);
+
+        var unexecutablePath = CreateArtifact();
+        if (!OperatingSystem.IsWindows())
+            File.SetUnixFileMode(unexecutablePath, File.GetUnixFileMode(unexecutablePath) & ~UnixFileMode.UserExecute & ~UnixFileMode.GroupExecute & ~UnixFileMode.OtherExecute);
+        var unexecutable = Fingerprint("example.test", unexecutablePath);
+        var permissionError = await Assert.ThrowsAsync<AnalysisException>(() => new GoDeepOperations(GoRunner(snapshot)).ExecuteAsync(new SelectedExecutionRequest(context, unexecutable, [test]), default).AsTask());
+        Assert.Equal("ArtifactsUnavailable", permissionError.Code);
+
+        var wrongSnapshot = Fingerprint("example.test", path) with { SnapshotId = "different-snapshot" };
+        var snapshotError = await Assert.ThrowsAsync<AnalysisException>(() => new GoDeepOperations(GoRunner(snapshot)).ExecuteAsync(new SelectedExecutionRequest(context, wrongSnapshot, [test]), default).AsTask());
+        Assert.Equal("ArtifactsUnavailable", snapshotError.Code);
+    }
+
+    [Fact]
+    public async Task Execute_UsesAnIsolatedMaterializedWorkspacePerOperation()
+    {
+        var snapshot = Snapshot("go.mod", "module example.test\n\ngo 1.22\n", "example.go", Source("example"));
+        var runner = GoRunner(snapshot);
+        var operations = new GoDeepOperations(runner);
+        var request = new SelectedExecutionRequest(Context(snapshot), Fingerprint("example.test", CreateArtifact()), [Test("TestAlpha")]);
+
+        await operations.ExecuteAsync(request, default);
+        await operations.ExecuteAsync(request, default);
+
+        var workingDirectories = runner.Requests
+            .Where(value => value.Arguments[0] == "tool")
+            .Select(value => value.WorkingDirectory)
+            .ToArray();
+        Assert.Equal(2, workingDirectories.Length);
+        Assert.NotEqual(workingDirectories[0], workingDirectories[1]);
     }
 
     [Fact]
@@ -175,6 +257,24 @@ public sealed class GoDeepOperationsTests : IDisposable
             Assert.Empty(scope.Observations);
             Assert.Contains(scope.Warnings, warning => warning.Contains("Blind spots", StringComparison.Ordinal));
         }
+    }
+
+    [Fact]
+    public async Task Observe_MixedValidAndMalformedProfileIsIncomplete()
+    {
+        var snapshot = Snapshot("go.mod", "module example.test\n\ngo 1.22\n", "example.go", Source("example"));
+        var runner = GoRunner(
+            snapshot,
+            executionOutput: _ => "{\"Action\":\"run\",\"Test\":\"TestAlpha\"}\n{\"Action\":\"pass\",\"Test\":\"TestAlpha\"}\n",
+            coverageText: "mode: set\nexample.test/example.go:1.1,1.2 1 1\nmalformed coverage line\n");
+
+        var result = await new GoDeepOperations(runner).ObserveAsync(
+            new ObservationRequest(Context(snapshot), Fingerprint("example.test", CreateArtifact()), [Test("TestAlpha")]),
+            default);
+
+        var scope = Assert.Single(result);
+        Assert.Equal(ObservationCompleteness.Incomplete, scope.Completeness);
+        Assert.Empty(scope.Observations);
     }
 
     [Fact]
@@ -213,6 +313,34 @@ public sealed class GoDeepOperationsTests : IDisposable
                 Assert.Equal("nested", Path.GetFileName(request.WorkingDirectory));
             }
         });
+    }
+
+    [Fact]
+    public async Task PrepareBuild_RejectsConfiguredFileThatIsNotAGoManifest()
+    {
+        var snapshot = Snapshot("not-go.mod", "module example.test\n\ngo 1.22\n", "example.go", Source("example"));
+        var context = Context(snapshot) with { ConfiguredSolution = "not-go.mod" };
+
+        var error = await Assert.ThrowsAsync<ConfigurationException>(() =>
+            new GoDeepOperations(GoRunner(snapshot)).PrepareBuildAsync(new BuildPreparationRequest(context), default).AsTask());
+
+        Assert.Equal("ConfiguredSolutionNotFound", error.Code);
+    }
+
+    [Fact]
+    public async Task PrepareBuild_ClassifiesGoLaunchFailureAsToolchainUnavailable()
+    {
+        var snapshot = Snapshot("go.mod", "module example.test\n\ngo 1.22\n", "example.go", Source("example"));
+        var goPath = Path.Combine(_root, "disappearing-go");
+        await File.WriteAllTextAsync(goPath, "placeholder");
+        var operations = new GoDeepOperations(
+            new FakeRunner((_, _) => throw new Win32Exception("could not start")),
+            goPath);
+
+        var error = await Assert.ThrowsAsync<AnalysisException>(() =>
+            operations.PrepareBuildAsync(new BuildPreparationRequest(Context(snapshot)), default).AsTask());
+
+        Assert.Equal("GoToolchainUnavailable", error.Code);
     }
 
     [Fact]
@@ -261,6 +389,8 @@ public sealed class GoDeepOperationsTests : IDisposable
         var path = Path.Combine(_root, "state", "artifacts", Guid.NewGuid().ToString("N") + ".test");
         Directory.CreateDirectory(Path.GetDirectoryName(path)!);
         File.WriteAllText(path, "test artifact");
+        if (!OperatingSystem.IsWindows())
+            File.SetUnixFileMode(path, File.GetUnixFileMode(path) | UnixFileMode.UserExecute);
         return path;
     }
 
@@ -280,6 +410,8 @@ public sealed class GoDeepOperationsTests : IDisposable
         string? listError = null,
         bool createArtifacts = false,
         Func<string, string>? executionOutput = null,
+        int executionExitCode = 0,
+        string? executionError = null,
         bool writeCoverage = false,
         string? coverageText = null) => new(async (request, token) =>
     {
@@ -294,6 +426,8 @@ public sealed class GoDeepOperationsTests : IDisposable
                 var output = request.Arguments[request.Arguments.ToList().IndexOf("-o") + 1];
                 Directory.CreateDirectory(Path.GetDirectoryName(output)!);
                 File.WriteAllText(output, "test artifact");
+                if (!OperatingSystem.IsWindows())
+                    File.SetUnixFileMode(output, File.GetUnixFileMode(output) | UnixFileMode.UserExecute);
             }
             return Success(string.Empty);
         }
@@ -308,7 +442,10 @@ public sealed class GoDeepOperationsTests : IDisposable
                 Directory.CreateDirectory(Path.GetDirectoryName(profile)!);
                 File.WriteAllText(profile, coverageText ?? (writeCoverage ? "mode: set\nexample.test/example.go:1.1,1.2 1 1\n" : "mode: set\n"));
             }
-            return Success(executionOutput?.Invoke(selector) ?? "{\"Action\":\"run\",\"Test\":\"TestAlpha\"}\n{\"Action\":\"pass\",\"Test\":\"TestAlpha\"}\n");
+            return new ProcessResult(
+                executionExitCode,
+                executionOutput?.Invoke(selector) ?? "{\"Action\":\"run\",\"Test\":\"TestAlpha\"}\n{\"Action\":\"pass\",\"Test\":\"TestAlpha\"}\n",
+                executionError ?? string.Empty);
         }
         return Success(string.Empty);
     });

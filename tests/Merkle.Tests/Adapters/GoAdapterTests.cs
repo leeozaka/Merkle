@@ -51,6 +51,18 @@ public sealed class GoAdapterTests
         Assert.Contains("golang", error.Message, StringComparison.Ordinal);
     }
 
+    [Fact]
+    public void Describe_DoesNotAdvertiseDeepWhenGoExecutableIsMissing()
+    {
+        var missing = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"), "go");
+        var descriptor = new GoAdapter(new StubAdapter(), new GoDeepOperations(new StubRunner(), missing)).Describe();
+
+        Assert.DoesNotContain("deep", descriptor.Profiles);
+        Assert.DoesNotContain(AdapterCapability.Discover, descriptor.Capabilities);
+        Assert.DoesNotContain(AdapterCapability.Execute, descriptor.Capabilities);
+        Assert.DoesNotContain(AdapterCapability.Observe, descriptor.Capabilities);
+    }
+
     private static RepositorySnapshot Snapshot() => new(
         new SnapshotIdentity("snapshot", "WORKTREE", "test"),
         Path.GetTempPath(),

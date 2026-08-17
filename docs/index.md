@@ -52,4 +52,4 @@ Resolve ambiguities in the specification. Record hard-to-reverse choices in ADRs
 
 ## Scope summary
 
-The initial target is one self-hosted CLI, one repository, .NET 6+ and Go 1.22+, macOS/Linux, serial deep observation, and explicit language selection for mixed repositories. Merkle gives advice. The team's existing CI/CD system still owns the full suite and external integration-test infrastructure.
+The initial target is one self-hosted CLI, one repository, one resolved deep-analysis scope, .NET 6+ and Go 1.22+, macOS/Linux, serial deep observation, and explicit language selection for mixed repositories. Merkle gives advice. The team's existing CI/CD system still owns the full suite and external integration-test infrastructure.

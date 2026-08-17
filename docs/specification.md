@@ -2,6 +2,7 @@
 
 Status: Adopted schema 1 specification  
 Applies to: Initial Merkle CLI and official .NET and Go adapters
+
 Related: [System design](system-design.md), [domain context](../CONTEXT.md), [implementation guide](implementation-guide.md)
 
 The words **must**, **should**, and **may** are normative. **Accepted**, **Proposed**, and **Deferred** labels keep suggestions from becoming accidental guarantees.
@@ -38,7 +39,7 @@ sequenceDiagram
 | Languages | Accepted | Mixed-language repositories require explicit selections and list detections when missing. |
 | Official adapter | Accepted | Provide a deep adapter for .NET 6+. |
 | Go adapter | Accepted | First-party deep adapter; canonical language identifier is `golang`, with `go` accepted as a CLI alias. |
-| Solutions | Accepted | Support exactly one .NET solution initially; ambiguity is an error. |
+| Analysis scope | Accepted | Resolve one .NET solution or Go repository/workspace scope per deep run; ambiguity is an error. |
 | Operating systems | Accepted | Support macOS and Linux; WSL is best-effort; native Windows is out of scope. |
 | State service | Accepted | No hosted service is provided. Team-owned remote storage is optional. |
 | Implementation language | Accepted | Build the core in C# on .NET 10; managed executables default to Native AOT publishing. |

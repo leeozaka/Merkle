@@ -307,6 +307,30 @@ func TestMapWorkspaceSumUsesAdjacentWorkspace(t *testing.T) {
 	}
 }
 
+func TestProtocolIndexRejectsAmbiguousWorkspaces(t *testing.T) {
+	snapshot := testSnapshot(
+		goFile("a/go.work", "go 1.22\nuse ./mod\n"),
+		goFile("a/mod/go.mod", "module example.test/a\n"),
+		goFile("b/go.work", "go 1.22\nuse ./mod\n"),
+		goFile("b/mod/go.mod", "module example.test/b\n"),
+	)
+	payload, err := json.Marshal(indexRequest{Snapshot: snapshot})
+	if err != nil {
+		t.Fatal(err)
+	}
+	envelope, err := json.Marshal(processRequest{ProtocolVersion: "1.0", RequestID: "ambiguous", Operation: "index", Payload: payload})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var output bytes.Buffer
+	if err := run(bytes.NewReader(envelope), &output); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(output.String(), `"code":"InvalidRequest"`) || !strings.Contains(output.String(), "a/go.work") || !strings.Contains(output.String(), "b/go.work") {
+		t.Fatalf("ambiguous workspace scope was not rejected deterministically: %s", output.String())
+	}
+}
+
 func TestCalculatorLocalCallMapsChangedMemberToTest(t *testing.T) {
 	snapshot := testSnapshot(
 		goFile("go.mod", "module example.test/calculator\n"),
@@ -340,6 +364,32 @@ func TestCalculatorExternalPackageCallMapsChangedMemberToTest(t *testing.T) {
 	result := mapGo(mapRequest{Snapshot: snapshot, Index: indexed, ChangedUnits: []changedUnit{{Identity: "golang:member:example.test/calculator/Add(int,int)", Kind: "member", ChangeKind: "modified"}}})
 	if len(result.RequestedTests) != 1 || result.RequestedTests[0].Identity != "golang:example.test/calculator:TestAdd" {
 		t.Fatalf("changed Add did not map from external package test: index=%+v result=%+v", indexed, result)
+	}
+}
+
+func TestImportedCallsDistinguishExternalAndIndexedPackages(t *testing.T) {
+	snapshot := testSnapshot(
+		goFile("go.mod", "module example.test/app\n"),
+		goFile("dep/dep.go", "package dep\nfunc Known() string { return \"ok\" }\n"),
+		goFile("use.go", "package app\nimport (\"fmt\"; \"example.test/app/dep\")\nfunc Use() string { _ = fmt.Sprintf(\"%d\", 1); _ = dep.Missing(); return dep.Known() }\n"),
+	)
+	indexed := indexGo(snapshot)
+	hasLocalEdge, warnedFmt, warnedMissing := false, false, false
+	for _, edge := range indexed.Edges {
+		if edge.SourceIdentity == "golang:member:example.test/app/Use()" && edge.TargetIdentity == "golang:member:example.test/app/dep/Known()" {
+			hasLocalEdge = true
+		}
+	}
+	for _, warning := range indexed.Warnings {
+		if strings.Contains(warning, "fmt.Sprintf") {
+			warnedFmt = true
+		}
+		if strings.Contains(warning, "dep.Missing") {
+			warnedMissing = true
+		}
+	}
+	if !hasLocalEdge || warnedFmt || !warnedMissing {
+		t.Fatalf("imported call classification was incorrect: edges=%+v warnings=%+v", indexed.Edges, indexed.Warnings)
 	}
 }
 

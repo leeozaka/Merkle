@@ -4,7 +4,8 @@ Status: historical analysis; superseded for core selection by [ADR-0015](adr/001
 Research date: 2026-08-07  
 Target operating systems: macOS and Linux; WSL may work but is not a supported target  
 Initial language adapter: .NET 6 and later  
-First-party second adapter: Go
+First-party adapter: Go
+
 Explicitly out of the current official-adapter scope: TypeScript/Node.js
 
 ## 1. Accepted direction and validation result

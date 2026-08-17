@@ -22,7 +22,7 @@ The host invokes these commands in a materialized immutable snapshot workspace, 
 
 The adapter discovers `go.work` and `go.mod` files in the snapshot. A workspace selects the modules listed by its `use` directives. Without a workspace, all discovered modules are considered unless one `go.mod` is configured. Nested modules use the longest matching module root. More than one `go.work` requires explicit configuration.
 
-Build and no-build validation include the snapshot identity, selected scope, Go version, module and package manifests, adapter versions, platform, and artifact hashes. A no-build run fails when the manifest or any compiled test artifact is absent, stale, or incompatible, and selected execution runs that prepared artifact directly. The adapter does not modify the analyzed repository's source, module files, or project configuration.
+Build and no-build validation include the snapshot identity, selected scope, Go version, module and package manifests, adapter versions, requested platform, effective `GOOS/GOARCH`, and artifact hashes. A no-build run fails when the manifest or any compiled test artifact is absent, stale, or incompatible, and selected execution runs that prepared artifact directly. The adapter does not modify the analyzed repository's source, module files, or project configuration.
 
 ## Stable identities and snapshots
 

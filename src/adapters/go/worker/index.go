@@ -38,6 +38,7 @@ type symbolTable struct {
 	functions map[string]string // import path/name -> member identity
 	types     map[string]string // import path/name -> type identity
 	methods   map[string]string // import path/receiver/name -> member identity
+	packages  map[string]bool
 }
 
 func indexGo(snapshot repositorySnapshot) adapterIndex {
@@ -116,7 +117,7 @@ func indexGoScoped(snapshot repositorySnapshot, configured string) (adapterIndex
 		}
 	}
 
-	table := symbolTable{functions: map[string]string{}, types: map[string]string{}, methods: map[string]string{}}
+	table := symbolTable{functions: map[string]string{}, types: map[string]string{}, methods: map[string]string{}, packages: packages}
 	// First pass establishes all declarations, allowing forward and cross-file resolution.
 	for _, pf := range parsed {
 		collectSymbols(pf, &units, &edges, &table)
@@ -151,8 +152,12 @@ func selectScope(snapshot repositorySnapshot, configured string) (repositorySnap
 			workspaces = append(workspaces, file.Path)
 		}
 	}
+	sort.Strings(workspaces)
 	if configured == "" && len(workspaces) == 1 {
 		configured = workspaces[0]
+	}
+	if configured == "" && len(workspaces) > 1 {
+		return repositorySnapshot{}, fmt.Errorf("multiple go.work files were found; configure one explicitly: %s", strings.Join(workspaces, ", "))
 	}
 	if configured == "" {
 		snapshot.Files = files
@@ -684,7 +689,7 @@ func indexCalls(pf parsedGoFile, table symbolTable, edges *[]impactEdge, warning
 					if imported, ok := pf.imports[base.Name]; ok {
 						if target, found := table.functions[imported+"/"+fun.Sel.Name]; found {
 							*edges = append(*edges, impactEdge{caller, target, "staticDependency"})
-						} else {
+						} else if table.packages[imported] {
 							*warnings = append(*warnings, "Unresolved imported call in "+pf.path+": "+imported+"."+fun.Sel.Name)
 						}
 					} else if typ, ok := localTypes[base.Name]; ok {

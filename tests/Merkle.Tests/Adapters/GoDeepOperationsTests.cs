@@ -316,6 +316,38 @@ public sealed class GoDeepOperationsTests : IDisposable
         Assert.All([discoveryError, executionError, observationError], error => Assert.Equal("ArtifactsUnavailable", error.Code));
     }
 
+    [Theory]
+    [InlineData("value")]
+    [InlineData("scope")]
+    [InlineData("configuration")]
+    [InlineData("platform")]
+    [InlineData("adapter")]
+    [InlineData("observer")]
+    [InlineData("targets")]
+    public async Task Execute_RejectsFingerprintMetadataMismatch(string field)
+    {
+        var snapshot = Snapshot("go.mod", "module example.test\n\ngo 1.22\n", "example.go", Source("example"));
+        var fingerprint = await PrepareFingerprintAsync(snapshot);
+        var incompatible = field switch
+        {
+            "value" => fingerprint with { Value = string.Empty },
+            "scope" => fingerprint with { WorkspacePath = "other/go.mod" },
+            "configuration" => fingerprint with { Configuration = "Release" },
+            "platform" => fingerprint with { Platform = "linux" },
+            "adapter" => fingerprint with { AdapterVersion = "other-adapter" },
+            "observer" => fingerprint with { ObserverVersion = "other-observer" },
+            "targets" => fingerprint with { Targets = ["other.test"] },
+            _ => throw new InvalidOperationException($"Unknown fingerprint field '{field}'.")
+        };
+
+        var error = await Assert.ThrowsAsync<AnalysisException>(() =>
+            new GoDeepOperations(GoRunner(snapshot)).ExecuteAsync(
+                new SelectedExecutionRequest(Context(snapshot), incompatible, [Test("TestAlpha")]),
+                default).AsTask());
+
+        Assert.Equal("ArtifactsUnavailable", error.Code);
+    }
+
     [Fact]
     public async Task Execute_UsesAnIsolatedMaterializedWorkspacePerOperation()
     {

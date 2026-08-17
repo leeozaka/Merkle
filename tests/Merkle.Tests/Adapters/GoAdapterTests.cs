@@ -63,6 +63,36 @@ public sealed class GoAdapterTests
         Assert.DoesNotContain(AdapterCapability.Observe, descriptor.Capabilities);
     }
 
+    [Fact]
+    public void Describe_WithoutWorkerReportsStaticAnalysisUnavailable()
+    {
+        var error = Assert.Throws<CapabilityException>(() => new GoAdapter().Describe());
+        Assert.Equal("AnalysisWorkerUnavailable", error.Code);
+    }
+
+    [Fact]
+    public async Task IndexAndMap_WithoutWorkerReportStaticAnalysisUnavailable()
+    {
+        var adapter = new GoAdapter();
+        var snapshot = Snapshot();
+        var indexError = await Assert.ThrowsAsync<CapabilityException>(() => adapter.IndexAsync(new AdapterIndexRequest(snapshot, null), default).AsTask());
+        Assert.Equal("AnalysisWorkerUnavailable", indexError.Code);
+        var mapError = await Assert.ThrowsAsync<CapabilityException>(() => adapter.MapAsync(new AdapterMapRequest(snapshot, new AdapterIndex([], [], []), []), default).AsTask());
+        Assert.Equal("AnalysisWorkerUnavailable", mapError.Code);
+    }
+
+    [Fact]
+    public async Task IndexAndMap_ValidateArgumentsAndCancellation()
+    {
+        var adapter = new GoAdapter();
+        await Assert.ThrowsAsync<ArgumentNullException>(() => adapter.IndexAsync(null!, default).AsTask());
+        await Assert.ThrowsAsync<ArgumentNullException>(() => adapter.MapAsync(null!, default).AsTask());
+        using var cancellation = new CancellationTokenSource();
+        cancellation.Cancel();
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => adapter.IndexAsync(new AdapterIndexRequest(Snapshot(), null), cancellation.Token).AsTask());
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => adapter.MapAsync(new AdapterMapRequest(Snapshot(), new AdapterIndex([], [], []), []), cancellation.Token).AsTask());
+    }
+
     private static RepositorySnapshot Snapshot() => new(
         new SnapshotIdentity("snapshot", "WORKTREE", "test"),
         Path.GetTempPath(),

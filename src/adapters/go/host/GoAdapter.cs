@@ -17,17 +17,7 @@ public sealed class GoAdapter : ILanguageAdapter, IBuildPreparer, ITestDiscovere
 
     public AdapterDescriptor Describe()
     {
-        var descriptor = _analysisWorker?.Describe() ?? new AdapterDescriptor(
-            ProtocolVersion: "1.0",
-            Language: "golang",
-            Producer: "merkle",
-            AdapterVersion: "0.1.0",
-            UnitIdentityVersion: "1",
-            TestIdentityVersion: "1",
-            Capabilities: [AdapterCapability.Detect, AdapterCapability.Index, AdapterCapability.Map],
-            Profiles: ["minimal"],
-            SupportedTargets: ["go1.22+"],
-            SupportedPlatforms: ["linux", "macos"]);
+        var descriptor = Analysis().Describe();
 
         if (_deepOperations is not { IsConfigured: true }) return descriptor;
 
@@ -48,18 +38,14 @@ public sealed class GoAdapter : ILanguageAdapter, IBuildPreparer, ITestDiscovere
     {
         ArgumentNullException.ThrowIfNull(request);
         cancellationToken.ThrowIfCancellationRequested();
-        return _analysisWorker is null
-            ? ValueTask.FromResult(new AdapterIndex([], [], []))
-            : _analysisWorker.IndexAsync(request, cancellationToken);
+        return Analysis().IndexAsync(request, cancellationToken);
     }
 
     public ValueTask<MappingResult> MapAsync(AdapterMapRequest request, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(request);
         cancellationToken.ThrowIfCancellationRequested();
-        return _analysisWorker is null
-            ? ValueTask.FromResult(new MappingResult([], request.ChangedUnits))
-            : _analysisWorker.MapAsync(request, cancellationToken);
+        return Analysis().MapAsync(request, cancellationToken);
     }
 
     public ValueTask<BuildPreparationResult> PrepareBuildAsync(BuildPreparationRequest request, CancellationToken cancellationToken) =>
@@ -80,4 +66,7 @@ public sealed class GoAdapter : ILanguageAdapter, IBuildPreparer, ITestDiscovere
     private GoDeepOperations Deep() => _deepOperations is { IsConfigured: true } deep
         ? deep
         : throw new CapabilityException("DeepToolchainUnavailable", "Function not available for: golang");
+
+    private ILanguageAdapter Analysis() => _analysisWorker
+        ?? throw new CapabilityException("AnalysisWorkerUnavailable", "Static analysis is unavailable for: golang. The Go adapter worker is not configured.");
 }

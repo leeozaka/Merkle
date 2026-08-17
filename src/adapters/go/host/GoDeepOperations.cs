@@ -1,6 +1,5 @@
 using System.ComponentModel;
 using System.Globalization;
-using System.Runtime.InteropServices;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
@@ -44,10 +43,10 @@ public sealed class GoDeepOperations : IBuildPreparer, ITestDiscoverer, ISelecte
         EnsureConfigured();
         await using var workspace = await Workspace.CreateAsync(request.Context, cancellationToken).ConfigureAwait(false);
         var scope = ResolveScope(request.Context.Snapshot, request.Context.ConfiguredSolution);
-        var goVersion = await GoVersionAsync(workspace.Root, scope, cancellationToken).ConfigureAwait(false);
+        var toolchain = await GoToolchainAsync(workspace.Root, scope, cancellationToken).ConfigureAwait(false);
         var packages = await ListPackagesAsync(workspace.Root, scope, cancellationToken, "BuildFailed").ConfigureAwait(false);
         var state = StateDirectory(request.Context);
-        var stateKey = BuildStateKey(request.Context, scope, goVersion);
+        var stateKey = BuildStateKey(request.Context, scope, toolchain.Identity);
         var manifestPath = ManifestPath(request.Context, stateKey);
 
         if (request.NoBuild)
@@ -55,11 +54,11 @@ public sealed class GoDeepOperations : IBuildPreparer, ITestDiscoverer, ISelecte
             try
             {
                 var persisted = JsonSerializer.Deserialize(await File.ReadAllTextAsync(manifestPath, cancellationToken).ConfigureAwait(false), GoJsonContext.Default.GoManifest);
-                if (persisted is null || !ManifestMatches(persisted, request.Context, scope, goVersion, packages, workspace.Root))
+                if (persisted is null || !ManifestMatches(persisted, request.Context, scope, toolchain.Identity, packages, workspace.Root))
                     throw new InvalidDataException();
                 foreach (var artifact in persisted.Fingerprint.Artifacts)
                 {
-                    if (!IsUsableArtifact(artifact.ArtifactPath) || !StringComparer.Ordinal.Equals(HashFile(artifact.ArtifactPath), artifact.ArtifactHash))
+                    if (!IsExecutableFile(artifact.ArtifactPath) || !StringComparer.Ordinal.Equals(HashFile(artifact.ArtifactPath), artifact.ArtifactHash))
                         throw new InvalidDataException();
                 }
 
@@ -125,7 +124,7 @@ public sealed class GoDeepOperations : IBuildPreparer, ITestDiscoverer, ISelecte
             artifacts.Add(new BuildArtifact(package.ImportPath, artifactPath!, null, artifactHash!, null));
         }
 
-        var fingerprint = CreateFingerprint(request.Context, scope, goVersion, packages, artifacts, workspace.Root);
+        var fingerprint = CreateFingerprint(request.Context, scope, toolchain.Identity, packages, artifacts, workspace.Root);
         Directory.CreateDirectory(Path.GetDirectoryName(manifestPath)!);
         var manifest = new GoManifest(fingerprint, PackageManifest(packages), ModuleManifest(scope, workspace.Root));
         var temporaryManifest = $"{manifestPath}.{Guid.NewGuid():N}.tmp";
@@ -148,8 +147,10 @@ public sealed class GoDeepOperations : IBuildPreparer, ITestDiscoverer, ISelecte
         EnsureConfigured();
         await using var workspace = await Workspace.CreateAsync(context, cancellationToken).ConfigureAwait(false);
         var scope = ResolveScope(context.Snapshot, context.ConfiguredSolution);
-        ValidateFingerprintContext(context, scope, fingerprint);
+        ValidateFingerprintMetadata(context, scope, fingerprint);
+        var toolchain = await GoToolchainAsync(workspace.Root, scope, cancellationToken).ConfigureAwait(false);
         var packages = await ListPackagesAsync(workspace.Root, scope, cancellationToken, "TestDiscoveryFailed").ConfigureAwait(false);
+        ValidateFingerprintCompatibility(context, scope, fingerprint, toolchain.Identity, packages, workspace.Root);
         var tests = new List<TestCatalogEntry>();
         var warnings = new List<string>();
         foreach (var package in packages.Where(value => value.HasTests).OrderBy(value => value.ImportPath, StringComparer.Ordinal))
@@ -196,7 +197,10 @@ public sealed class GoDeepOperations : IBuildPreparer, ITestDiscoverer, ISelecte
         EnsureConfigured();
         await using var workspace = await Workspace.CreateAsync(request.Context, cancellationToken).ConfigureAwait(false);
         var scope = ResolveScope(request.Context.Snapshot, request.Context.ConfiguredSolution);
-        ValidateFingerprintContext(request.Context, scope, request.Fingerprint);
+        ValidateFingerprintMetadata(request.Context, scope, request.Fingerprint);
+        var toolchain = await GoToolchainAsync(workspace.Root, scope, cancellationToken).ConfigureAwait(false);
+        var packages = await ListPackagesAsync(workspace.Root, scope, cancellationToken, "ArtifactsUnavailable").ConfigureAwait(false);
+        ValidateFingerprintCompatibility(request.Context, scope, request.Fingerprint, toolchain.Identity, packages, workspace.Root);
         var results = new List<TestExecutionResult>();
         foreach (var test in request.Tests.OrderBy(value => value.Identity, StringComparer.Ordinal))
         {
@@ -213,15 +217,23 @@ public sealed class GoDeepOperations : IBuildPreparer, ITestDiscoverer, ISelecte
         EnsureConfigured();
         await using var workspace = await Workspace.CreateAsync(request.Context, cancellationToken).ConfigureAwait(false);
         var scope = ResolveScope(request.Context.Snapshot, request.Context.ConfiguredSolution);
-        ValidateFingerprintContext(request.Context, scope, request.Fingerprint);
+        ValidateFingerprintMetadata(request.Context, scope, request.Fingerprint);
+        var toolchain = await GoToolchainAsync(workspace.Root, scope, cancellationToken).ConfigureAwait(false);
+        var packages = await ListPackagesAsync(workspace.Root, scope, cancellationToken, "ArtifactsUnavailable").ConfigureAwait(false);
+        ValidateFingerprintCompatibility(request.Context, scope, request.Fingerprint, toolchain.Identity, packages, workspace.Root);
         var runId = request.RunId ?? Guid.NewGuid().ToString("N");
         var outputRoot = Path.Combine(StateDirectory(request.Context), "observations");
         Directory.CreateDirectory(outputRoot);
+        var operationId = Guid.NewGuid().ToString("N");
         var scopes = new List<ObservationScope>();
         foreach (var test in request.Tests.OrderBy(value => value.Identity, StringComparer.Ordinal))
         {
             cancellationToken.ThrowIfCancellationRequested();
-            var profile = Path.Combine(outputRoot, Hash(Encoding.UTF8.GetBytes(runId + "\0" + test.Identity)) + ".cov");
+            var profile = Path.Combine(outputRoot, Hash(Encoding.UTF8.GetBytes(string.Join('\0',
+                request.Context.Snapshot.Identity.Value,
+                request.Fingerprint.Value,
+                operationId,
+                test.Identity))) + ".cov");
             try
             {
                 if (File.Exists(profile)) File.Delete(profile);
@@ -243,6 +255,17 @@ public sealed class GoDeepOperations : IBuildPreparer, ITestDiscoverer, ISelecte
                     [],
                     new TestExecutionResult(test.Identity, TestOutcome.TimedOut, request.Timeout, "The explicit per-test timeout expired."),
                     [$"ObservationIncomplete: execution timed out before a complete scope could be observed. {BlindSpots}"]));
+            }
+            finally
+            {
+                try
+                {
+                    if (File.Exists(profile)) File.Delete(profile);
+                }
+                catch (Exception error) when (error is IOException or UnauthorizedAccessException)
+                {
+                    // Raw cover profiles are temporary; cleanup must not replace the observation result.
+                }
             }
         }
 
@@ -270,11 +293,17 @@ public sealed class GoDeepOperations : IBuildPreparer, ITestDiscoverer, ISelecte
             var parsed = ParseExecution(result.StandardOutput, test.Identity, test.Selector);
             if (parsed is not null) return parsed;
             if (result.ExitCode != 0)
+            {
+                if (IsArtifactLaunchFailure(result))
+                    throw new AnalysisException(
+                        "ArtifactsUnavailable",
+                        $"The prepared Go test artifact for '{test.ExecutionScope}' could not be started: {Diagnostic(result)}");
                 return new TestExecutionResult(
                     test.Identity,
                     TestOutcome.Crashed,
                     null,
                     $"The Go test artifact exited before reporting the selected test: {Diagnostic(result)}");
+            }
             throw new AnalysisException("TestResultUnavailable", $"The Go test artifact did not report selected test '{test.Identity}'.");
         }
         catch (OperationCanceledException) when (timeoutSource?.IsCancellationRequested == true && !cancellationToken.IsCancellationRequested)
@@ -339,14 +368,44 @@ public sealed class GoDeepOperations : IBuildPreparer, ITestDiscoverer, ISelecte
         return null;
     }
 
-    private async ValueTask<string> GoVersionAsync(string root, GoScope scope, CancellationToken cancellationToken)
+    private static bool IsArtifactLaunchFailure(ProcessResult result)
     {
-        var result = await RunGoAsync(root, scope, ["version"], cancellationToken).ConfigureAwait(false);
+        var diagnostics = string.Concat(result.StandardOutput, "\n", result.StandardError);
+        return diagnostics.Contains("test2json: fork/exec", StringComparison.OrdinalIgnoreCase) ||
+               diagnostics.Contains("test2json: failed to start", StringComparison.OrdinalIgnoreCase) ||
+               diagnostics.Contains("test2json: cannot execute", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private async ValueTask<GoToolchain> GoToolchainAsync(string root, GoScope scope, CancellationToken cancellationToken)
+    {
+        var result = await RunGoAsync(root, scope, ["env", "-json", "GOVERSION", "GOOS", "GOARCH"], cancellationToken).ConfigureAwait(false);
         if (result.ExitCode != 0) throw new AnalysisException("GoToolchainUnavailable", $"The system Go resolver failed: {Diagnostic(result)}");
-        var match = VersionPattern.Match(result.StandardOutput);
-        if (!match.Success || !int.TryParse(match.Groups["major"].Value, NumberStyles.None, CultureInfo.InvariantCulture, out var major) || !int.TryParse(match.Groups["minor"].Value, NumberStyles.None, CultureInfo.InvariantCulture, out var minor) || major < 1 || (major == 1 && minor < 22))
+        string? version;
+        string? goOs;
+        string? goArch;
+        try
+        {
+            using var document = JsonDocument.Parse(result.StandardOutput);
+            var value = document.RootElement;
+            version = value.TryGetProperty("GOVERSION", out var versionValue) ? versionValue.GetString() : null;
+            goOs = value.TryGetProperty("GOOS", out var osValue) ? osValue.GetString() : null;
+            goArch = value.TryGetProperty("GOARCH", out var archValue) ? archValue.GetString() : null;
+        }
+        catch (Exception error) when (error is JsonException or InvalidOperationException)
+        {
+            throw new AnalysisException("GoToolchainUnavailable", "The system Go resolver returned malformed environment metadata.", error);
+        }
+
+        var match = VersionPattern.Match(version ?? string.Empty);
+        if (!match.Success ||
+            !int.TryParse(match.Groups["major"].Value, NumberStyles.None, CultureInfo.InvariantCulture, out var major) ||
+            !int.TryParse(match.Groups["minor"].Value, NumberStyles.None, CultureInfo.InvariantCulture, out var minor) ||
+            major < 1 ||
+            (major == 1 && minor < 22) ||
+            string.IsNullOrWhiteSpace(goOs) ||
+            string.IsNullOrWhiteSpace(goArch))
             throw new AnalysisException("GoToolchainUnavailable", "Go 1.22 or newer is required for deep Go analysis.");
-        return match.Value;
+        return new GoToolchain(version!.Trim(), goOs!, goArch!);
     }
 
     private async ValueTask<IReadOnlyList<GoPackage>> ListPackagesAsync(
@@ -454,12 +513,12 @@ public sealed class GoDeepOperations : IBuildPreparer, ITestDiscoverer, ISelecte
     private static string ArtifactFor(BuildFingerprint fingerprint, TestCatalogEntry test)
     {
         var artifact = fingerprint.Artifacts?.FirstOrDefault(value => StringComparer.Ordinal.Equals(value.ScopePath, test.ExecutionScope));
-        if (artifact is null || !IsUsableArtifact(artifact.ArtifactPath) || !StringComparer.Ordinal.Equals(HashFile(artifact.ArtifactPath), artifact.ArtifactHash))
+        if (artifact is null || !IsExecutableFile(artifact.ArtifactPath) || !StringComparer.Ordinal.Equals(HashFile(artifact.ArtifactPath), artifact.ArtifactHash))
             throw new AnalysisException("ArtifactsUnavailable", $"No compatible prepared test artifact is available for '{test.ExecutionScope}'.");
         return artifact.ArtifactPath;
     }
 
-    private static bool IsUsableArtifact(string path)
+    private static bool IsExecutableFile(string path)
     {
         if (!File.Exists(path)) return false;
         if (OperatingSystem.IsWindows()) return true;
@@ -481,27 +540,27 @@ public sealed class GoDeepOperations : IBuildPreparer, ITestDiscoverer, ISelecte
             if (entry.ValueKind == JsonValueKind.String && entry.GetString() is { } text) yield return text;
     }
 
-    private static BuildFingerprint CreateFingerprint(DeepAdapterContext context, GoScope scope, string goVersion, IReadOnlyList<GoPackage> packages, IReadOnlyList<BuildArtifact> artifacts, string root)
+    private static BuildFingerprint CreateFingerprint(DeepAdapterContext context, GoScope scope, string toolchainIdentity, IReadOnlyList<GoPackage> packages, IReadOnlyList<BuildArtifact> artifacts, string root)
     {
         var platform = context.Platform;
         var packageEntries = packages.Select(value => $"{value.ImportPath}|{value.Module.ModulePath}|{string.Join(',', value.TestFiles.OrderBy(file => file, StringComparer.Ordinal))}").OrderBy(value => value, StringComparer.Ordinal);
         var moduleEntries = ModuleManifest(scope, root).OrderBy(value => value, StringComparer.Ordinal);
         var artifactEntries = artifacts.OrderBy(value => value.ScopePath, StringComparer.Ordinal).Select(value => $"{value.ScopePath}|{value.ArtifactHash}");
-        var canonical = string.Join('\n', [context.Snapshot.Identity.Value, scope.ConfiguredPath ?? "<modules>", context.Configuration, platform, EffectivePlatform(), goVersion, AdapterVersion, ObserverVersion, .. moduleEntries, .. packageEntries, .. artifactEntries]);
+        var canonical = string.Join('\n', [context.Snapshot.Identity.Value, scope.ConfiguredPath ?? "<modules>", context.Configuration, platform, toolchainIdentity, AdapterVersion, ObserverVersion, .. moduleEntries, .. packageEntries, .. artifactEntries]);
         return new BuildFingerprint(
             Hash(Encoding.UTF8.GetBytes(canonical)),
             context.Snapshot.Identity.Value,
             scope.ConfiguredPath ?? "<modules>",
             context.Configuration,
             platform,
-            goVersion,
+            toolchainIdentity,
             [.. scope.Modules.Select(value => value.ModulePath).OrderBy(value => value, StringComparer.Ordinal)],
             AdapterVersion,
             ObserverVersion,
             [.. artifacts.OrderBy(value => value.ScopePath, StringComparer.Ordinal)]);
     }
 
-    private static bool ManifestMatches(GoManifest manifest, DeepAdapterContext context, GoScope scope, string goVersion, IReadOnlyList<GoPackage> packages, string root)
+    private static bool ManifestMatches(GoManifest manifest, DeepAdapterContext context, GoScope scope, string toolchainIdentity, IReadOnlyList<GoPackage> packages, string root)
     {
         if (manifest.Fingerprint is null || manifest.Packages is null || manifest.Modules is null ||
             manifest.Fingerprint.Targets is null || manifest.Fingerprint.Artifacts is null) return false;
@@ -509,7 +568,7 @@ public sealed class GoDeepOperations : IBuildPreparer, ITestDiscoverer, ISelecte
             !StringComparer.Ordinal.Equals(manifest.Fingerprint.WorkspacePath, scope.ConfiguredPath ?? "<modules>") ||
             !StringComparer.Ordinal.Equals(manifest.Fingerprint.Configuration, context.Configuration) ||
             !StringComparer.Ordinal.Equals(manifest.Fingerprint.Platform, context.Platform) ||
-            !StringComparer.Ordinal.Equals(manifest.Fingerprint.ToolchainVersion, goVersion) ||
+            !StringComparer.Ordinal.Equals(manifest.Fingerprint.ToolchainVersion, toolchainIdentity) ||
             !StringComparer.Ordinal.Equals(manifest.Fingerprint.AdapterVersion, AdapterVersion) ||
             !StringComparer.Ordinal.Equals(manifest.Fingerprint.ObserverVersion, ObserverVersion)) return false;
         var currentModules = ModuleManifest(scope, root).OrderBy(value => value, StringComparer.Ordinal).ToArray();
@@ -517,7 +576,7 @@ public sealed class GoDeepOperations : IBuildPreparer, ITestDiscoverer, ISelecte
         var currentTargets = scope.Modules.Select(value => value.ModulePath).OrderBy(value => value, StringComparer.Ordinal).ToArray();
         var expectedArtifacts = packages.Where(value => value.HasTests).Select(value => value.ImportPath).OrderBy(value => value, StringComparer.Ordinal).ToArray();
         var actualArtifacts = manifest.Fingerprint.Artifacts.Select(value => value.ScopePath).OrderBy(value => value, StringComparer.Ordinal).ToArray();
-        var artifactDirectory = Path.Combine(StateDirectory(context), "artifacts", BuildStateKey(context, scope, goVersion));
+        var artifactDirectory = Path.Combine(StateDirectory(context), "artifacts", BuildStateKey(context, scope, toolchainIdentity));
         if (!currentModules.SequenceEqual(manifest.Modules.OrderBy(value => value, StringComparer.Ordinal), StringComparer.Ordinal) ||
             !currentPackages.SequenceEqual(manifest.Packages.OrderBy(value => value, StringComparer.Ordinal), StringComparer.Ordinal) ||
             !currentTargets.SequenceEqual(manifest.Fingerprint.Targets.OrderBy(value => value, StringComparer.Ordinal), StringComparer.Ordinal) ||
@@ -533,11 +592,11 @@ public sealed class GoDeepOperations : IBuildPreparer, ITestDiscoverer, ISelecte
             if (!StringComparer.Ordinal.Equals(expectedPath, Path.GetFullPath(artifact.ArtifactPath))) return false;
         }
 
-        var candidate = CreateFingerprint(context, scope, goVersion, packages, manifest.Fingerprint.Artifacts, root);
+        var candidate = CreateFingerprint(context, scope, toolchainIdentity, packages, manifest.Fingerprint.Artifacts, root);
         return StringComparer.Ordinal.Equals(candidate.Value, manifest.Fingerprint.Value);
     }
 
-    private static void ValidateFingerprintContext(
+    private static void ValidateFingerprintMetadata(
         DeepAdapterContext context,
         GoScope scope,
         BuildFingerprint fingerprint)
@@ -554,6 +613,54 @@ public sealed class GoDeepOperations : IBuildPreparer, ITestDiscoverer, ISelecte
             !expectedTargets.SequenceEqual(fingerprint.Targets.OrderBy(value => value, StringComparer.Ordinal), StringComparer.Ordinal))
         {
             throw new AnalysisException("ArtifactsUnavailable", "The Go build fingerprint is incompatible with the requested snapshot and scope.");
+        }
+    }
+
+    private static void ValidateFingerprintCompatibility(
+        DeepAdapterContext context,
+        GoScope scope,
+        BuildFingerprint fingerprint,
+        string toolchainIdentity,
+        IReadOnlyList<GoPackage> packages,
+        string root)
+    {
+        var expectedArtifacts = packages
+            .Where(package => package.HasTests)
+            .Select(package => package.ImportPath)
+            .OrderBy(value => value, StringComparer.Ordinal);
+        if (fingerprint.Artifacts is null ||
+            fingerprint.Artifacts.Any(artifact =>
+                string.IsNullOrWhiteSpace(artifact.ScopePath) ||
+                string.IsNullOrWhiteSpace(artifact.ArtifactPath) ||
+                string.IsNullOrWhiteSpace(artifact.ArtifactHash)) ||
+            !StringComparer.Ordinal.Equals(fingerprint.ToolchainVersion, toolchainIdentity) ||
+            !expectedArtifacts.SequenceEqual(
+                fingerprint.Artifacts.Select(artifact => artifact.ScopePath).OrderBy(value => value, StringComparer.Ordinal),
+                StringComparer.Ordinal))
+        {
+            throw new AnalysisException("ArtifactsUnavailable", "The Go build fingerprint is incompatible with the current toolchain and artifacts.");
+        }
+
+        try
+        {
+            foreach (var artifact in fingerprint.Artifacts)
+            {
+                if (!IsExecutableFile(artifact.ArtifactPath) ||
+                    !StringComparer.Ordinal.Equals(HashFile(artifact.ArtifactPath), artifact.ArtifactHash))
+                    throw new AnalysisException("ArtifactsUnavailable", "A prepared Go test artifact is missing, unexecutable, or does not match its fingerprint.");
+            }
+
+            var candidate = CreateFingerprint(context, scope, toolchainIdentity, packages, fingerprint.Artifacts, root);
+            if (!StringComparer.Ordinal.Equals(candidate.Value, fingerprint.Value))
+                throw new AnalysisException("ArtifactsUnavailable", "The Go build fingerprint value does not match the current snapshot, toolchain, and artifacts.");
+        }
+        catch (AnalysisException)
+        {
+            throw;
+        }
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException or ArgumentException or NotSupportedException)
+        {
+            throw new AnalysisException("ArtifactsUnavailable", "The Go build fingerprint or one of its artifacts could not be validated.", error);
         }
     }
 
@@ -628,13 +735,37 @@ public sealed class GoDeepOperations : IBuildPreparer, ITestDiscoverer, ISelecte
             if (!inBlock && !line.StartsWith("use ", StringComparison.Ordinal)) continue;
             var value = (inBlock ? line : line[4..]).Trim().Trim('"');
             if (value.Length == 0) continue;
-            var root = Path.GetDirectoryName(workPath)?.Replace('\\', '/') ?? string.Empty;
-            var candidate = Normalize(Path.Combine(root, value, "go.mod"));
-            if (candidate.StartsWith("../", StringComparison.Ordinal) || candidate == "..") throw new ConfigurationException("UnsafeSnapshotPath", $"Go workspace use path '{value}' escapes the repository.");
+            var candidate = ResolveWorkspaceModulePath(workPath, value);
             if (!snapshot.Files.Any(file => Normalize(file.Path) == candidate)) throw new ConfigurationException("ModuleNotFound", $"Go workspace module '{value}' has no go.mod.");
             result.Add(candidate);
         }
         return [.. result.Distinct(StringComparer.Ordinal).OrderBy(value => value, StringComparer.Ordinal)];
+    }
+
+    private static string ResolveWorkspaceModulePath(string workPath, string value)
+    {
+        var normalizedValue = value.Replace('\\', '/');
+        if (normalizedValue.StartsWith("/", StringComparison.Ordinal) ||
+            normalizedValue.StartsWith('\\') ||
+            Regex.IsMatch(normalizedValue, "^[A-Za-z]:"))
+            throw new ConfigurationException("UnsafeSnapshotPath", $"Go workspace use path '{value}' escapes the repository.");
+
+        var workspaceDirectory = (Path.GetDirectoryName(workPath) ?? string.Empty).Replace('\\', '/');
+        var segments = new List<string>();
+        foreach (var segment in string.Join('/', workspaceDirectory, normalizedValue, "go.mod").Split('/'))
+        {
+            if (segment.Length == 0 || segment == ".") continue;
+            if (segment == "..")
+            {
+                if (segments.Count == 0)
+                    throw new ConfigurationException("UnsafeSnapshotPath", $"Go workspace use path '{value}' escapes the repository.");
+                segments.RemoveAt(segments.Count - 1);
+                continue;
+            }
+            segments.Add(segment);
+        }
+
+        return string.Join('/', segments);
     }
 
     private static GoModule ModuleFromSnapshot(RepositorySnapshot snapshot, string goModPath, string? workPath, string? workSumPath)
@@ -753,28 +884,26 @@ public sealed class GoDeepOperations : IBuildPreparer, ITestDiscoverer, ISelecte
     }
 
     private static string StateDirectory(DeepAdapterContext context) => Path.GetFullPath(context.StateDirectory ?? Path.Combine(Path.GetTempPath(), "merkle-state"));
-    private static string BuildStateKey(DeepAdapterContext context, GoScope scope, string goVersion) => Hash(Encoding.UTF8.GetBytes(string.Join('\0',
+    private static string BuildStateKey(DeepAdapterContext context, GoScope scope, string toolchainIdentity) => Hash(Encoding.UTF8.GetBytes(string.Join('\0',
         context.Snapshot.Identity.Value,
         scope.ConfiguredPath ?? "<modules>",
         context.Configuration,
         context.Platform,
-        EffectivePlatform(),
-        goVersion,
+        toolchainIdentity,
         AdapterVersion,
         ObserverVersion)));
     private static string ManifestPath(DeepAdapterContext context, string stateKey) => Path.Combine(StateDirectory(context), "fingerprints", stateKey + ".manifest.json");
-    private static string EffectivePlatform() => $"{(OperatingSystem.IsMacOS() ? "darwin" : "linux")}/{RuntimeInformation.ProcessArchitecture switch { Architecture.X64 => "amd64", Architecture.Arm64 => "arm64", Architecture.Arm => "arm", _ => RuntimeInformation.ProcessArchitecture.ToString().ToLowerInvariant() }}";
     private static bool ExecutableExists(string executable)
     {
         if (Path.IsPathRooted(executable) || executable.Contains(Path.DirectorySeparatorChar) || executable.Contains(Path.AltDirectorySeparatorChar))
-            return File.Exists(executable);
+            return IsExecutableFile(executable);
         var searchPath = Environment.GetEnvironmentVariable("PATH");
         if (string.IsNullOrWhiteSpace(searchPath)) return false;
         foreach (var directory in searchPath.Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
         {
             try
             {
-                if (File.Exists(Path.Combine(directory, executable))) return true;
+                if (IsExecutableFile(Path.Combine(directory, executable))) return true;
             }
             catch (Exception error) when (error is ArgumentException or NotSupportedException or PathTooLongException)
             {
@@ -797,6 +926,10 @@ public sealed class GoDeepOperations : IBuildPreparer, ITestDiscoverer, ISelecte
     private sealed record GoScope(string? ConfiguredPath, string? WorkPath, IReadOnlyList<GoModule> Modules);
     private sealed record GoModule(string RootPath, string ModulePath, string GoModPath, string? SumPath, string? WorkPath, string? WorkSumPath);
     private sealed record GoPackage(string ImportPath, string Directory, GoModule Module, IReadOnlyList<string> TestFiles, bool HasTests);
+    private sealed record GoToolchain(string Version, string GoOs, string GoArch)
+    {
+        public string Identity => $"{Version} {GoOs}/{GoArch}";
+    }
     private sealed record CoverProfileResult(IReadOnlyList<DynamicObservation> Observations, bool IsValid);
 
     private sealed class Workspace : IAsyncDisposable
@@ -870,23 +1003,45 @@ public sealed class GoDeepOperations : IBuildPreparer, ITestDiscoverer, ISelecte
 
         private static void ValidateLink(string path, string target, string root)
         {
-            if (string.IsNullOrWhiteSpace(target) || Path.IsPathRooted(target) || target.Replace('\\', '/').Split('/').Contains("..", StringComparer.Ordinal) || Regex.IsMatch(target, "^[A-Za-z]:[\\\\/]"))
-                throw new AnalysisException("UnsafeSnapshotPath", $"Snapshot symlink '{path}' has an unsafe target.");
-            var destination = SafePath(root, path);
-            var resolved = Path.GetFullPath(Path.Combine(Path.GetDirectoryName(destination)!, target));
-            if (!resolved.StartsWith(Path.GetFullPath(root).TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar, StringComparison.Ordinal))
-                throw new AnalysisException("UnsafeSnapshotPath", $"Snapshot symlink '{path}' has an unsafe target.");
+            try
+            {
+                if (string.IsNullOrWhiteSpace(target) || Path.IsPathRooted(target) || target.Replace('\\', '/').Split('/').Contains("..", StringComparer.Ordinal) || Regex.IsMatch(target, "^[A-Za-z]:[\\\\/]"))
+                    throw new AnalysisException("UnsafeSnapshotPath", $"Snapshot symlink '{path}' has an unsafe target.");
+                var destination = SafePath(root, path);
+                var resolved = Path.GetFullPath(Path.Combine(Path.GetDirectoryName(destination)!, target));
+                if (!resolved.StartsWith(Path.GetFullPath(root).TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar, StringComparison.Ordinal))
+                    throw new AnalysisException("UnsafeSnapshotPath", $"Snapshot symlink '{path}' has an unsafe target.");
+            }
+            catch (AnalysisException)
+            {
+                throw;
+            }
+            catch (Exception error) when (error is ArgumentException or NotSupportedException or PathTooLongException)
+            {
+                throw new AnalysisException("UnsafeSnapshotPath", $"Snapshot symlink '{path}' has an unsafe target.", error);
+            }
         }
 
         private static string SafePath(string root, string relative)
         {
-            var normalized = Normalize(relative);
-            if (string.IsNullOrWhiteSpace(normalized) || relative.StartsWith("/", StringComparison.Ordinal) || relative.StartsWith("\\", StringComparison.Ordinal) || Regex.IsMatch(relative, "^[A-Za-z]:") || normalized.Split('/').Contains("..", StringComparer.Ordinal))
-                throw new AnalysisException("UnsafeSnapshotPath", $"Snapshot path '{relative}' is unsafe.");
-            var fullRoot = Path.GetFullPath(root).TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar;
-            var full = Path.GetFullPath(Path.Combine(root, normalized.Replace('/', Path.DirectorySeparatorChar)));
-            if (!full.StartsWith(fullRoot, StringComparison.Ordinal)) throw new AnalysisException("UnsafeSnapshotPath", $"Snapshot path '{relative}' escapes its workspace.");
-            return full;
+            try
+            {
+                var normalized = Normalize(relative);
+                if (string.IsNullOrWhiteSpace(normalized) || relative.StartsWith("/", StringComparison.Ordinal) || relative.StartsWith("\\", StringComparison.Ordinal) || Regex.IsMatch(relative, "^[A-Za-z]:") || normalized.Split('/').Contains("..", StringComparer.Ordinal))
+                    throw new AnalysisException("UnsafeSnapshotPath", $"Snapshot path '{relative}' is unsafe.");
+                var fullRoot = Path.GetFullPath(root).TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar;
+                var full = Path.GetFullPath(Path.Combine(root, normalized.Replace('/', Path.DirectorySeparatorChar)));
+                if (!full.StartsWith(fullRoot, StringComparison.Ordinal)) throw new AnalysisException("UnsafeSnapshotPath", $"Snapshot path '{relative}' escapes its workspace.");
+                return full;
+            }
+            catch (AnalysisException)
+            {
+                throw;
+            }
+            catch (Exception error) when (error is ArgumentException or NotSupportedException or PathTooLongException)
+            {
+                throw new AnalysisException("UnsafeSnapshotPath", $"Snapshot path '{relative}' is unsafe.", error);
+            }
         }
     }
 }

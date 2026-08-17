@@ -1,6 +1,7 @@
 using System.ComponentModel;
 using System.Security.Cryptography;
 using System.Text;
+using System.Text.Json.Nodes;
 using Merkle.Adapters.Go;
 using Merkle.Core.Adapters;
 using Merkle.Core.Domain;
@@ -60,6 +61,59 @@ public sealed class GoDeepOperationsTests : IDisposable
         var incompatible = await Assert.ThrowsAsync<AnalysisException>(() =>
             operations.PrepareBuildAsync(new BuildPreparationRequest(context, NoBuild: true), default).AsTask());
         Assert.Equal("ArtifactsUnavailable", incompatible.Code);
+    }
+
+    [Theory]
+    [InlineData("snapshot")]
+    [InlineData("scope")]
+    [InlineData("configuration")]
+    [InlineData("platform")]
+    [InlineData("toolchain")]
+    [InlineData("adapter")]
+    [InlineData("observer")]
+    [InlineData("targets")]
+    [InlineData("packages")]
+    [InlineData("modules")]
+    [InlineData("artifact-scope")]
+    [InlineData("artifact-path")]
+    [InlineData("artifact-hash")]
+    [InlineData("artifacts-null")]
+    [InlineData("fingerprint-null")]
+    public async Task PrepareBuild_NoBuildRejectsTamperedManifestMetadata(string field)
+    {
+        var snapshot = Snapshot("go.mod", "module example.test\n\ngo 1.22\n", "example.go", Source("example"), "example_test.go", TestSource("example"));
+        var context = Context(snapshot);
+        var operations = new GoDeepOperations(GoRunner(snapshot, createArtifacts: true));
+        await operations.PrepareBuildAsync(new BuildPreparationRequest(context), default);
+        var manifestPath = Assert.Single(Directory.GetFiles(Path.Combine(_root, "state", "fingerprints"), "*.manifest.json"));
+        var manifest = JsonNode.Parse(await File.ReadAllTextAsync(manifestPath))!.AsObject();
+        var fingerprint = manifest["fingerprint"]!.AsObject();
+
+        switch (field)
+        {
+            case "snapshot": fingerprint["snapshotId"] = "other-snapshot"; break;
+            case "scope": fingerprint["workspacePath"] = "other/go.mod"; break;
+            case "configuration": fingerprint["configuration"] = "Release"; break;
+            case "platform": fingerprint["platform"] = "linux"; break;
+            case "toolchain": fingerprint["toolchainVersion"] = "go1.22.5 linux/amd64"; break;
+            case "adapter": fingerprint["adapterVersion"] = "other-adapter"; break;
+            case "observer": fingerprint["observerVersion"] = "other-observer"; break;
+            case "targets": fingerprint["targets"] = new JsonArray("other.test"); break;
+            case "packages": manifest["packages"] = new JsonArray("other.test"); break;
+            case "modules": manifest["modules"] = new JsonArray("other-module"); break;
+            case "artifact-scope": fingerprint["artifacts"]![0]!["scopePath"] = "other.test"; break;
+            case "artifact-path": fingerprint["artifacts"]![0]!["artifactPath"] = Path.Combine(_root, "other.test"); break;
+            case "artifact-hash": fingerprint["artifacts"]![0]!["artifactHash"] = new string('0', 64); break;
+            case "artifacts-null": fingerprint["artifacts"] = null; break;
+            case "fingerprint-null": manifest["fingerprint"] = null; break;
+            default: throw new InvalidOperationException($"Unknown manifest field '{field}'.");
+        }
+
+        await File.WriteAllTextAsync(manifestPath, manifest.ToJsonString());
+        var error = await Assert.ThrowsAsync<AnalysisException>(() =>
+            operations.PrepareBuildAsync(new BuildPreparationRequest(context, NoBuild: true), default).AsTask());
+
+        Assert.Equal("ArtifactsUnavailable", error.Code);
     }
 
     [Fact]

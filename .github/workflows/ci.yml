@@ -21,11 +21,20 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v7
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: src/adapters/go/worker/go.mod
       - uses: actions/setup-dotnet@v6
         with:
           dotnet-version: |
             8.0.x
             10.0.x
+      - name: Verify Go adapter
+        working-directory: src/adapters/go/worker
+        run: |
+          test -z "$(gofmt -l .)"
+          go vet ./...
+          go test ./...
       - run: dotnet restore Merkle.slnx
       - run: dotnet restore src/cli/Merkle.Cli.csproj --runtime ${{ matrix.rid }}
       - run: dotnet list Merkle.slnx package --vulnerable --include-transitive
@@ -39,6 +48,10 @@ jobs:
           artifacts/${{ matrix.rid }}/Merkle.Cli --help
           test -f artifacts/${{ matrix.rid }}/workers/dotnet/Merkle.Adapters.DotNet.Worker.dll
           test -f artifacts/${{ matrix.rid }}/workers/dotnet/Merkle.Adapters.DotNet.Observer.dll
+          test -x artifacts/${{ matrix.rid }}/workers/go/merkle-adapter-go
+          printf '%s' '{"protocolVersion":"1.0","requestId":"smoke","operation":"describe","payload":{}}' \
+            | artifacts/${{ matrix.rid }}/workers/go/merkle-adapter-go \
+            | grep -q '"language":"golang"'
       - uses: actions/upload-artifact@v7
         with:
           name: merkle-${{ matrix.rid }}

@@ -3,6 +3,7 @@
     <Project Path="src/adapters/dotnet/Merkle.Adapters.DotNet.csproj" />
     <Project Path="src/adapters/dotnet/observer/Merkle.Adapters.DotNet.Observer.csproj" />
     <Project Path="src/adapters/dotnet/worker/Merkle.Adapters.DotNet.Worker.csproj" />
+    <Project Path="src/adapters/go/host/Merkle.Adapters.Go.csproj" />
     <Project Path="src/cli/Merkle.Cli.csproj" />
     <Project Path="src/core/Merkle.Core.csproj" />
     <Project Path="src/infrastructure/Merkle.Infrastructure.csproj" />

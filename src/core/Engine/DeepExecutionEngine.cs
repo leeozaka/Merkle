@@ -31,14 +31,14 @@ public interface IDeepExecutionEngine
 public sealed class DeepExecutionEngine(
     ImpactEngine planner,
     ISnapshotSource snapshotSource,
-    ILanguageAdapter adapter,
+    AdapterRegistry adapterRegistry,
     IStateStore stateStore,
     TimeProvider timeProvider,
     SecretRedactor? redactor = null) : IDeepExecutionEngine
 {
     private readonly ImpactEngine _planner = planner ?? throw new ArgumentNullException(nameof(planner));
     private readonly ISnapshotSource _snapshotSource = snapshotSource ?? throw new ArgumentNullException(nameof(snapshotSource));
-    private readonly ILanguageAdapter _adapter = adapter ?? throw new ArgumentNullException(nameof(adapter));
+    private readonly AdapterRegistry _adapterRegistry = adapterRegistry ?? throw new ArgumentNullException(nameof(adapterRegistry));
     private readonly IStateStore _stateStore = stateStore ?? throw new ArgumentNullException(nameof(stateStore));
     private readonly TimeProvider _timeProvider = timeProvider ?? throw new ArgumentNullException(nameof(timeProvider));
     private readonly SecretRedactor _redactor = redactor ?? SecretRedactor.Default;
@@ -62,12 +62,17 @@ public sealed class DeepExecutionEngine(
 
         try
         {
+            var selection = RequireDeepSelection(request.Plan.Languages);
+            var requiredCapabilities = request.Mode == DeepExecutionMode.Observe
+                ? ObserveCapabilities
+                : RunCapabilities;
+            var adapter = _adapterRegistry.Resolve(selection, requiredCapabilities);
             var resolver = request.Mode == DeepExecutionMode.RunSelected &&
                            plan.Policy.Recommendation != PlanRecommendation.FullSuite
-                ? Require<ISelectedTestResolver>("resolve-selected-tests")
+                ? Require<ISelectedTestResolver>(adapter, "resolve-selected-tests")
                 : null;
-            var buildPreparer = Require<IBuildPreparer>("build");
-            var discoverer = Require<ITestDiscoverer>("discover");
+            var buildPreparer = Require<IBuildPreparer>(adapter, "build");
+            var discoverer = Require<ITestDiscoverer>(adapter, "discover");
             var snapshots = await _snapshotSource.BindAsync(
                 request.Plan.BaselineReference,
                 request.Plan.CandidateReference,
@@ -98,7 +103,7 @@ public sealed class DeepExecutionEngine(
             var executionWarnings = new List<string>(prepared.Warnings.Concat(catalog.Warnings));
             if (request.Mode == DeepExecutionMode.Observe)
             {
-                var observer = Require<ITestObserver>("observe");
+                var observer = Require<ITestObserver>(adapter, "observe");
                 var scopes = await observer.ObserveAsync(
                     new ObservationRequest(
                         context,
@@ -112,7 +117,7 @@ public sealed class DeepExecutionEngine(
             }
             else
             {
-                var executor = Require<ISelectedTestExecutor>("execute");
+                var executor = Require<ISelectedTestExecutor>(adapter, "execute");
                 var executions = await executor.ExecuteAsync(
                     new SelectedExecutionRequest(
                         context,
@@ -134,6 +139,7 @@ public sealed class DeepExecutionEngine(
                     plan.Policy.Recommendation == PlanRecommendation.FullSuite,
                 request.Mode == DeepExecutionMode.Observe ? "observe" : "run-selected",
                 request.Plan,
+                adapter.Describe(),
                 cancellationToken).ConfigureAwait(false);
         }
         catch (OperationCanceledException)
@@ -165,6 +171,7 @@ public sealed class DeepExecutionEngine(
         bool completeSuite,
         string executionMode,
         PlanRequest planRequest,
+        AdapterDescriptor adapterDescriptor,
         CancellationToken cancellationToken)
     {
         var failed = historyExecutions.Any(execution => execution.Outcome is
@@ -189,10 +196,9 @@ public sealed class DeepExecutionEngine(
             Warnings = [.. plan.Warnings.Concat(warnings).Distinct(StringComparer.Ordinal)],
             EvidenceCutoff = _timeProvider.GetUtcNow()
         };
-        var descriptor = _adapter.Describe();
         var compatibility = HistoryCompatibility.ForAdapter(
             plan.RepositoryIdentity,
-            descriptor,
+            adapterDescriptor,
             planRequest.ConfiguredSolution,
             fingerprint.Configuration,
             fingerprint.Platform);
@@ -314,10 +320,28 @@ public sealed class DeepExecutionEngine(
         _ => throw new ArgumentOutOfRangeException(nameof(outcome))
     };
 
+    private static readonly AdapterCapability[] ObserveCapabilities =
+        [AdapterCapability.Detect, AdapterCapability.Index, AdapterCapability.Map, AdapterCapability.Discover, AdapterCapability.Observe];
+
+    private static readonly AdapterCapability[] RunCapabilities =
+        [AdapterCapability.Detect, AdapterCapability.Index, AdapterCapability.Map, AdapterCapability.Discover, AdapterCapability.Execute];
+
+    private static LanguageSelection RequireDeepSelection(IReadOnlyList<LanguageSelection> selections)
+    {
+        if (selections.Count != 1 || !StringComparer.Ordinal.Equals(selections[0].Profile, "deep"))
+        {
+            throw new CapabilityException(
+                "DeepProfileRequired",
+                "Deep execution requires exactly one '<language>:deep' language selection.");
+        }
+
+        return selections[0];
+    }
+
     private static CapabilityException MissingCapability(string capability) => new(
         "DeepToolchainUnavailable",
-        $"The configured adapter does not expose the '{capability}' capability.");
+        $"The selected language adapter does not expose the '{capability}' capability.");
 
-    private T Require<T>(string capability) where T : class =>
-        _adapter as T ?? throw MissingCapability(capability);
+    private static T Require<T>(ILanguageAdapter adapter, string capability) where T : class =>
+        adapter as T ?? throw MissingCapability(capability);
 }

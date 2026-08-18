@@ -14,16 +14,16 @@ public sealed record BuildPreparationRequest(
     DeepAdapterContext Context,
     bool NoBuild = false);
 
-public sealed record BuildArtifact(string ProjectPath, string AssemblyPath, string? PdbPath, string AssemblyHash, string? PdbHash);
+public sealed record BuildArtifact(string ScopePath, string ArtifactPath, string? SymbolsPath, string ArtifactHash, string? SymbolsHash);
 
 public sealed record BuildFingerprint(
     string Value,
     string SnapshotId,
-    string SolutionPath,
+    string WorkspacePath,
     string Configuration,
     string Platform,
-    string DotNetVersion,
-    IReadOnlyList<string> TargetFrameworks,
+    string ToolchainVersion,
+    IReadOnlyList<string> Targets,
     string AdapterVersion,
     string ObserverVersion,
     IReadOnlyList<BuildArtifact> Artifacts);
@@ -34,7 +34,7 @@ public sealed record TestCatalogEntry(
     string Identity,
     string DisplayName,
     string Framework,
-    string ProjectPath,
+    string ExecutionScope,
     string Selector);
 
 public sealed record DiscoveryCatalog(BuildFingerprint Fingerprint, IReadOnlyList<TestCatalogEntry> Tests, IReadOnlyList<string> Warnings);

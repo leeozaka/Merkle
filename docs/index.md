@@ -1,6 +1,6 @@
 # Merkle documentation
 
-Merkle has an implementation of roadmap phases 0–5. This directory records the product constraints, the .NET 10/Native AOT topology, and the deferred backlog.
+Merkle has an implementation of roadmap phases 0–5. This directory records the product constraints, the .NET 10/Native AOT topology, and the first-party Go adapter.
 
 ## Start here
 
@@ -21,6 +21,7 @@ Merkle has an implementation of roadmap phases 0–5. This directory records the
 - [Implementation guide](implementation-guide.md) describes module seams, invariants, delivery order, and verification.
 - [Roadmap](roadmap.md) defines phases and measurable exit criteria without calendar promises.
 - [Adapter authoring](adapter-authoring.md) defines the capability-negotiated contributor contract.
+- [Go adapter](go-adapter.md) documents the first-party worker, host operations, supported repository scope, and blind spots.
 - [CI and remote-state operations](operations.md) defines trusted-runner, cache, remote API, and release rules.
 - [Language options](language-options.md) compares likely core implementation languages and toolchains.
 - [Conversation decisions](conversation-decisions.md) preserves the evolution of the idea and the constraints agreed during discovery.
@@ -51,4 +52,4 @@ Resolve ambiguities in the specification. Record hard-to-reverse choices in ADRs
 
 ## Scope summary
 
-The initial target is one self-hosted CLI, one repository, one .NET solution, .NET 6+, macOS/Linux, serial deep observation, and explicit language selection for mixed repositories. Merkle gives advice. The team's existing CI/CD system still owns the full suite and external integration-test infrastructure.
+The initial target is one self-hosted CLI, one repository, one resolved deep-analysis scope, .NET 6+ and Go 1.22+, macOS/Linux, serial deep observation, and explicit language selection for mixed repositories. Merkle gives advice. The team's existing CI/CD system still owns the full suite and external integration-test infrastructure.

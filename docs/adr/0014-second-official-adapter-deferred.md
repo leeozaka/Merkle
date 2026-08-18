@@ -1,6 +1,6 @@
 # ADR-0014: Defer any second first-party adapter
 
-- **Status:** Deferred
+- **Status:** Superseded by [ADR-0017](0017-first-party-go-deep-adapter.md)
 - **Date:** 2026-08-07
 - **Decision owners:** Merkle maintainers
 
@@ -34,3 +34,7 @@ One high-quality deep adapter gives the protocol a real implementation before th
 ## Re-evaluation conditions
 
 Revisit this decision after the .NET adapter and protocol conformance suite are stable, and only when user demand, maintainer capacity, packaging feasibility, and end-to-end effort have been measured.
+
+## Supersession
+
+ADR-0017 accepts a first-party deep Go adapter and records its support boundary.

@@ -11,7 +11,10 @@ public sealed class GitSnapshotSourceTests
     [Fact]
     public async Task Bind_RequiresExplicitLocalReferencesInsteadOfGuessing()
     {
-        var source = new GitSnapshotSource("/repo", new FakeProcessRunner());
+        var source = new GitSnapshotSource(
+            "/repo",
+            new FakeProcessRunner(),
+            environment: new FakeEnvironmentReader(new Dictionary<string, string>()));
 
         var error = await Assert.ThrowsAsync<ConfigurationException>(async () =>
             await source.BindAsync(null, null, default));

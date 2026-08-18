@@ -245,9 +245,13 @@ public sealed class CommandLineParser : ICommandLineParser
                     $"Language selection '{item}' must use language:profile syntax.");
             }
 
-            yield return new LanguageSelection(
-                item[..separator].ToLowerInvariant(),
-                item[(separator + 1)..].ToLowerInvariant());
+            var language = item[..separator].ToLowerInvariant() switch
+            {
+                "go" => "golang",
+                var normalized => normalized
+            };
+
+            yield return new LanguageSelection(language, item[(separator + 1)..].ToLowerInvariant());
         }
     }
 

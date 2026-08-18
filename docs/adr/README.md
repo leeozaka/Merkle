@@ -17,9 +17,10 @@ These records cover decisions that are expensive to reverse, surprising without 
 | [ADR-0011](0011-savings-and-confidence-policy.md) | Default the savings floor to 30%; do not default the confidence threshold | Accepted |
 | [ADR-0012](0012-sqlite-local-store.md) | Use SQLite locally behind a provider boundary | Accepted |
 | [ADR-0013](0013-core-language-deferred.md) | Defer the core implementation language until focused spikes are complete | Superseded by ADR-0015 |
-| [ADR-0014](0014-second-official-adapter-deferred.md) | Consider Go later, but promise no second first-party adapter yet | Deferred |
+| [ADR-0014](0014-second-official-adapter-deferred.md) | Consider Go later, but promise no second first-party adapter yet | Superseded |
 | [ADR-0015](0015-dotnet-10-native-aot-core.md) | Use C# on .NET 10 with Native AOT as the core toolchain | Accepted |
 | [ADR-0016](0016-startup-hook-observation.md) | Use a startup hook for dependency-free coarse .NET observation | Accepted |
+| [ADR-0017](0017-first-party-go-deep-adapter.md) | Ship a first-party deep Go adapter | Accepted |
 
 ## Maintenance rules
 

@@ -87,6 +87,46 @@ public sealed class CliApplicationTests
     }
 
     [Fact]
+    public async Task Run_ObserveDefaultsToDotNetDeepSelection()
+    {
+        var deep = new FakeDeepEngine();
+        var fixture = new ApplicationFixture(deepExecutionEngine: deep);
+
+        var exitCode = await fixture.Application.RunAsync(["observe"], default);
+
+        Assert.Equal(0, exitCode);
+        Assert.Equal([new LanguageSelection("dotnet", "deep")], deep.Request!.Plan.Languages);
+    }
+
+    [Fact]
+    public async Task Run_ObserveAcceptsExactlyOneNonDotNetDeepSelection()
+    {
+        var deep = new FakeDeepEngine();
+        var fixture = new ApplicationFixture(deepExecutionEngine: deep);
+
+        var exitCode = await fixture.Application.RunAsync(["observe", "--languages", "golang:deep"], default);
+
+        Assert.Equal(0, exitCode);
+        Assert.Equal([new LanguageSelection("golang", "deep")], deep.Request!.Plan.Languages);
+    }
+
+    [Theory]
+    [InlineData("golang:deep,dotnet:deep")]
+    [InlineData("dotnet:minimal")]
+    public async Task Run_DeepCommandRejectsNonSingularOrNonDeepSelection(string languages)
+    {
+        var deep = new FakeDeepEngine();
+        var fixture = new ApplicationFixture(deepExecutionEngine: deep);
+
+        var exitCode = await fixture.Application.RunAsync(["run", "--languages", languages], default);
+
+        Assert.Equal(3, exitCode);
+        Assert.Contains("CapabilityError:DeepProfileRequired", fixture.StandardError.ToString(), StringComparison.Ordinal);
+        Assert.Contains("<language>:deep", fixture.StandardError.ToString(), StringComparison.Ordinal);
+        Assert.Null(deep.Request);
+    }
+
+    [Fact]
     public async Task Run_DeepCommandWithoutToolchainReturnsCapabilityExitCode()
     {
         var fixture = new ApplicationFixture();

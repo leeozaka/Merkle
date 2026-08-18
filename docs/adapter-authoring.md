@@ -170,7 +170,7 @@ Ordering must be stable. If a language construct has no safe semantic identity, 
 }
 ```
 
-This Go example illustrates the contract. A Go adapter remains deferred.
+This Go example illustrates the contract. The first-party Go adapter implements this contract with the canonical language identifier `golang`.
 
 Requirements:
 
@@ -326,4 +326,4 @@ Passing results should identify operating system, architecture, ecosystem toolch
 
 Protocol compatibility, adapter correctness, and language support are separate claims. The core may support a protocol version while a third-party adapter remains experimental. Terminal reports must include producer, version, capability, identity, and platform details so users can judge that adapter.
 
-The first project-owned deep implementation targets .NET 6+. TypeScript is out. Go may be evaluated later. This design promises no second project-owned adapter.
+The project-owned deep implementations target .NET 6+ and Go 1.22+. TypeScript is out. See [Go adapter](go-adapter.md) for the first-party Go support boundary.

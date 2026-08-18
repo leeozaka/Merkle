@@ -121,7 +121,7 @@ public sealed class DotNetDeepOperations(IProcessRunner runner, string observerA
             var project = ProjectFromIdentity(selected.Identity);
             if (selected.Identity.StartsWith("dotnet-project:", StringComparison.Ordinal))
             {
-                var projectTests = catalog.Where(test => test.ProjectPath == project).ToArray();
+                var projectTests = catalog.Where(test => test.ExecutionScope == project).ToArray();
                 if (projectTests.Length == 0)
                 {
                     unresolved.Add(selected);
@@ -139,7 +139,7 @@ public sealed class DotNetDeepOperations(IProcessRunner runner, string observerA
             var selector = StaticSelector(selected.Identity, project) ?? DisplaySelector(selected.DisplayName);
             var discovered = catalog
                 .Where(test =>
-                    StringComparer.Ordinal.Equals(test.ProjectPath, project) &&
+                    StringComparer.Ordinal.Equals(test.ExecutionScope, project) &&
                     StringComparer.Ordinal.Equals(test.Selector, selector))
                 .OrderBy(test => test.Identity, StringComparer.Ordinal)
                 .FirstOrDefault();
@@ -208,7 +208,7 @@ public sealed class DotNetDeepOperations(IProcessRunner runner, string observerA
         using var linked = deadline is null ? null : CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, deadline.Token);
         try
         {
-            var result = await RunAsync(root, ["test", test.ProjectPath, "--no-build", "--configuration", context.Configuration, "-p:CollectCoverage=false", "--filter", $"FullyQualifiedName={test.Selector}", "--logger", $"trx;LogFileName={trxName}", "--results-directory", resultsDirectory, "--nologo"], environment, linked?.Token ?? cancellationToken).ConfigureAwait(false);
+            var result = await RunAsync(root, ["test", test.ExecutionScope, "--no-build", "--configuration", context.Configuration, "-p:CollectCoverage=false", "--filter", $"FullyQualifiedName={test.Selector}", "--logger", $"trx;LogFileName={trxName}", "--results-directory", resultsDirectory, "--nologo"], environment, linked?.Token ?? cancellationToken).ConfigureAwait(false);
             var trx = Directory.EnumerateFiles(resultsDirectory, "*.trx", SearchOption.AllDirectories).OrderBy(path => path, StringComparer.Ordinal).FirstOrDefault();
             var parsed = trx is null ? null : ParseTrx(trx, test.Identity);
             if (parsed is not null) return parsed;
@@ -239,8 +239,8 @@ public sealed class DotNetDeepOperations(IProcessRunner runner, string observerA
         }
         var canonical = string.Join("\n", new[] { context.Snapshot.Identity.Value, solution, context.Configuration, context.Platform, version, AdapterVersion, ObserverVersion }
             .Concat(tfms.OrderBy(value => value, StringComparer.Ordinal))
-            .Concat(artifacts.OrderBy(value => value.ProjectPath, StringComparer.Ordinal).Select(value => $"{value.ProjectPath}|{value.AssemblyHash}|{value.PdbHash}")));
-        return new BuildFingerprint(Hash(Encoding.UTF8.GetBytes(canonical)), context.Snapshot.Identity.Value, solution, context.Configuration, context.Platform, version, tfms, AdapterVersion, ObserverVersion, [.. artifacts.OrderBy(value => value.ProjectPath, StringComparer.Ordinal)]);
+            .Concat(artifacts.OrderBy(value => value.ScopePath, StringComparer.Ordinal).Select(value => $"{value.ScopePath}|{value.ArtifactHash}|{value.SymbolsHash}")));
+        return new BuildFingerprint(Hash(Encoding.UTF8.GetBytes(canonical)), context.Snapshot.Identity.Value, solution, context.Configuration, context.Platform, version, tfms, AdapterVersion, ObserverVersion, [.. artifacts.OrderBy(value => value.ScopePath, StringComparer.Ordinal)]);
     }
 
     private async ValueTask<string> DotNetVersionAsync(string root, CancellationToken cancellationToken)
@@ -269,7 +269,7 @@ public sealed class DotNetDeepOperations(IProcessRunner runner, string observerA
         foreach (var artifact in fingerprint.Artifacts)
         {
             if (!loaded.Any(path => MatchesArtifact(path, artifact))) continue;
-            result.Add(new DynamicObservation(testIdentity, $"dotnet:project:{artifact.ProjectPath}", fingerprint.Value, AdapterVersion, ObserverVersion, runId, "assembly", "Assembly-load observation only; it cannot observe members, reflection-only resolution, native code, child processes, or assemblies loaded before the hook."));
+            result.Add(new DynamicObservation(testIdentity, $"dotnet:project:{artifact.ScopePath}", fingerprint.Value, AdapterVersion, ObserverVersion, runId, "assembly", "Assembly-load observation only; it cannot observe members, reflection-only resolution, native code, child processes, or assemblies loaded before the hook."));
         }
         return [.. result.OrderBy(value => value.UnitIdentity, StringComparer.Ordinal)];
     }
@@ -280,16 +280,16 @@ public sealed class DotNetDeepOperations(IProcessRunner runner, string observerA
         {
             if (StringComparer.OrdinalIgnoreCase.Equals(
                     Path.GetFullPath(loadedPath),
-                    Path.GetFullPath(artifact.AssemblyPath)))
+                    Path.GetFullPath(artifact.ArtifactPath)))
             {
                 return true;
             }
 
             return StringComparer.OrdinalIgnoreCase.Equals(
                        Path.GetFileName(loadedPath),
-                       Path.GetFileName(artifact.AssemblyPath)) &&
+                       Path.GetFileName(artifact.ArtifactPath)) &&
                    File.Exists(loadedPath) &&
-                   StringComparer.Ordinal.Equals(HashFile(loadedPath), artifact.AssemblyHash);
+                   StringComparer.Ordinal.Equals(HashFile(loadedPath), artifact.ArtifactHash);
         }
         catch (Exception error) when (error is IOException or UnauthorizedAccessException or ArgumentException)
         {

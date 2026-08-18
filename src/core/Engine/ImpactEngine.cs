@@ -234,7 +234,13 @@ public sealed class ImpactEngine(
                     null,
                     null);
             }
-            var warnings = BuildWarnings(unmapped.Count, request.Pedantic)
+            var warnings = BuildWarnings(
+                    unmapped.Count,
+                    request.Pedantic,
+                    adapters.Any(adapter => string.Equals(
+                        adapter.Describe().Language,
+                        "dotnet",
+                        StringComparison.OrdinalIgnoreCase)))
                 .Concat(adapterWarnings)
                 .Distinct(StringComparer.Ordinal)
                 .ToArray();
@@ -431,7 +437,10 @@ public sealed class ImpactEngine(
         descriptor.SupportedTargets?.OrderBy(value => value, StringComparer.Ordinal).ToArray() ?? [],
         descriptor.SupportedPlatforms?.OrderBy(value => value, StringComparer.Ordinal).ToArray() ?? []);
 
-    private static IReadOnlyList<string> BuildWarnings(int unmappedCount, bool pedantic)
+    private static IReadOnlyList<string> BuildWarnings(
+        int unmappedCount,
+        bool pedantic,
+        bool usesDotNetAdapter)
     {
         var warnings = new List<string>
         {
@@ -442,7 +451,10 @@ public sealed class ImpactEngine(
             warnings.Add($"{unmappedCount} changed source unit(s) have no known test relationship.");
         }
 
-        warnings.Add("Phase 1 uses project-level .NET test targets; individual test discovery is not yet available.");
+        if (usesDotNetAdapter)
+        {
+            warnings.Add("Phase 1 uses project-level .NET test targets; individual test discovery is not yet available.");
+        }
         if (pedantic && unmappedCount > 0)
         {
             warnings.Add("Pedantic policy rejected this plan because it contains unmapped source units.");

@@ -2,7 +2,7 @@
 
 Merkle is a self-hosted test-impact assistant. It compares a baseline repository snapshot with a candidate snapshot, identifies changed source units, traces their likely impact, and returns an explainable list of relevant tests.
 
-**Status:** Roadmap phases 0–5 are implemented behind versioned seams. The C#/.NET 10 CLI supports planning, serial .NET observation, policy-gated selected execution, local/remote history, and transactional state. Runtime observation is intentionally coarse: the startup hook records assembly/project evidence and reports its member/reflection/native/child-process blind spots.
+**Status:** Roadmap phases 0–5 are implemented behind versioned seams. The C#/.NET 10 CLI supports first-party deep .NET and Go adapters, policy-gated selected execution, local/remote history, and transactional state. Runtime observation is intentionally coarse: .NET records assembly/project evidence and Go records file-level coverage, with explicit blind spots for each adapter.
 
 The designed RFC is available as [Word](Merkle-Test-Impact-System-Design.docx) and [PDF](Merkle-Test-Impact-System-Design.pdf). Those rendered artifacts predate ADR-0015; the Markdown specification and ADRs are authoritative for the .NET 10 decision. See the [QA report](QA-REPORT.md) for render, accessibility, privacy, and package checks.
 
@@ -75,7 +75,7 @@ Run the full suite periodically, such as in a nightly job. Those complete runs s
 - Unmapped changed code is reported and allowed by default; a pedantic policy may reject it.
 - No timeout is imposed by default. An explicit `timeoutMs`/`--timeout-ms` enables one.
 - The initial .NET scope supports one solution.
-- TypeScript is not in the first-party scope. A later Go adapter is only a candidate.
+- Go is a first-party deep adapter; its canonical language identifier is `golang` and the CLI accepts `go` as an alias.
 - Third-party adapters are capability-negotiated but not guaranteed by the core project.
 
 ## CLI
@@ -114,6 +114,12 @@ merkle run \
   --timeout-ms 120000
 ```
 
+Observe a Go workspace with the first-party adapter (`go` is normalized to `golang`):
+
+```bash
+merkle observe --languages go:deep --solution go.work
+```
+
 Inspect or reset disposable local state:
 
 ```bash
@@ -127,7 +133,7 @@ Import a schema-1 JSON terminal report from an official CI run:
 merkle history import path/to/terminal-report.json
 ```
 
-Future mixed-language syntax may look like this, but only adapters that advertise the requested capabilities can run:
+Mixed-language planning uses comma-separated selections; only adapters that advertise the requested capabilities can run:
 
 ```bash
 merkle plan --languages dotnet:deep,golang:minimal
@@ -178,6 +184,7 @@ Copyable files are included in [`examples/merkle.yml`](examples/merkle.yml) and 
 - [Implementation guide](docs/implementation-guide.md): seams, invariants, data flow, and vertical delivery order.
 - [Roadmap](docs/roadmap.md): phases, decision gates, and exit criteria.
 - [Adapter authoring](docs/adapter-authoring.md): minimal/deep capability contract for contributors.
+- [Go adapter](docs/go-adapter.md): first-party Go worker, host operations, scope, identities, and observation limits.
 - [CI and remote-state operations](docs/operations.md): runner trust, cache, remote API, and release verification.
 - [Language options](docs/language-options.md): implementation-language effort and toolkit analysis.
 - [Conversation decisions](docs/conversation-decisions.md): how the product constraints were reached.
@@ -185,4 +192,4 @@ Copyable files are included in [`examples/merkle.yml`](examples/merkle.yml) and 
 
 ## Build and release
 
-The Native AOT CLI keeps Roslyn and test-platform work in companion managed processes. CI builds and tests on macOS and Linux, enforces 80% aggregate line and branch coverage, publishes self-contained artifacts for x64 and Arm64, and attaches signed GitHub build-provenance attestations. Analyzed repositories receive no package or project changes.
+The Native AOT CLI keeps Roslyn and test-platform work in companion managed processes and bundles the Go protocol worker. CI builds and tests on macOS and Linux, enforces 80% aggregate line and branch coverage, publishes self-contained artifacts for x64 and Arm64, and attaches signed GitHub build-provenance attestations. Analyzed repositories receive no package or project changes.

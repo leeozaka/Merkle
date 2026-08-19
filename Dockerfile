@@ -90,7 +90,9 @@ RUN --mount=type=cache,target=/var/cache/merkle/nuget \
       --configuration Release \
       --runtime "${MERKLE_RUNTIME}" \
       --output /opt/merkle
-RUN rm -rf /src/merkle && mkdir -p /workspace
+RUN chmod -R 0777 /var/cache/merkle && \
+    rm -rf /src/merkle && \
+    mkdir -p /workspace
 WORKDIR /workspace
 
 COPY docker/entrypoint.sh /usr/local/bin/merkle-entrypoint

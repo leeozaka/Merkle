@@ -527,7 +527,7 @@ public sealed class ImpactEngine(
         100_000,
         1L * 1024 * 1024 * 1024,
         256L * 1024 * 1024,
-        16 * 1024 * 1024,
+        TerminalReportLimits.MaximumBytes,
         1 * 1024 * 1024,
         100,
         warnings.Any(warning => warning.Contains("truncated", StringComparison.OrdinalIgnoreCase)));

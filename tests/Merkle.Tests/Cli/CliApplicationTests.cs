@@ -154,6 +154,46 @@ public sealed class CliApplicationTests
     }
 
     [Fact]
+    public async Task Run_HistoryImportAcceptsReportAboveLegacySixteenMiBCeiling()
+    {
+        using var directory = new TemporaryDirectory();
+        var path = Path.Combine(directory.Path, "report.json");
+        var report = TerminalReportFactory.Success(
+            "source",
+            new SnapshotIdentity("base", "base", "git"),
+            new SnapshotIdentity("head", "head", "git"),
+            "repository") with
+        {
+            Warnings = [new string('x', 17 * 1024 * 1024)]
+        };
+        await File.WriteAllTextAsync(path, new JsonReportRenderer().Render(report));
+        var importer = new FakeHistoryImporter();
+        var fixture = new ApplicationFixture(historyImporter: importer);
+
+        var exitCode = await fixture.Application.RunAsync(["history", "import", path], default);
+
+        Assert.Equal(0, exitCode);
+        Assert.Equal("source", importer.Source?.RunId);
+    }
+
+    [Fact]
+    public async Task Run_HistoryImportRejectsReportAboveCurrentCeiling()
+    {
+        using var directory = new TemporaryDirectory();
+        var path = Path.Combine(directory.Path, "report.json");
+        await using (var stream = File.Create(path))
+        {
+            stream.SetLength(TerminalReportLimits.MaximumBytes + 1L);
+        }
+        var fixture = new ApplicationFixture(historyImporter: new FakeHistoryImporter());
+
+        var exitCode = await fixture.Application.RunAsync(["history", "import", path], default);
+
+        Assert.Equal(2, exitCode);
+        Assert.Contains("ConfigurationError:ImportReportTooLarge", fixture.StandardError.ToString(), StringComparison.Ordinal);
+    }
+
+    [Fact]
     public async Task Run_UnknownThrownExceptionIsRedactedAndUsesAnalysisExitCode()
     {
         var fixture = new ApplicationFixture(deepExecutionEngine: new ThrowingDeepEngine());

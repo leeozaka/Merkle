@@ -1,5 +1,6 @@
 using System.Security.Cryptography;
 using System.Text;
+using System.Xml.Linq;
 using Merkle.Build;
 using Merkle.Core.Processes;
 
@@ -172,7 +173,7 @@ public sealed class AdapterBuildDefinitionsTests
         {
             if (request.FileName == "mvn")
             {
-                const string property = "-Dproject.build.directory=";
+                const string property = "-Dmerkle.build.directory=";
                 var destination = request.Arguments.Single(argument => argument.StartsWith(property, StringComparison.Ordinal))[property.Length..];
                 Directory.CreateDirectory(destination);
                 File.WriteAllText(Path.Combine(destination, "merkle-adapter-java.jar"), "java worker", Encoding.UTF8);
@@ -193,6 +194,20 @@ public sealed class AdapterBuildDefinitionsTests
         var maven = Assert.Single(runner.Requests, request => request.FileName == "mvn");
         Assert.DoesNotContain("-DskipTests", maven.Arguments);
         Assert.Contains(runner.Requests, request => request.FileName == "java" && request.Arguments[0] == "-jar");
+    }
+
+    [Fact]
+    public void JavaPomBindsHelperOutputDirectoryProperty()
+    {
+        var pom = XDocument.Load(Path.Combine(FindRepositoryRoot(), "src", "adapters", "java", "pom.xml"));
+        var xml = pom.Root!.Name.Namespace;
+
+        Assert.Equal(
+            "${project.basedir}/target",
+            pom.Root.Element(xml + "properties")!.Element(xml + "merkle.build.directory")!.Value);
+        Assert.Equal(
+            "${merkle.build.directory}",
+            pom.Root.Element(xml + "build")!.Element(xml + "directory")!.Value);
     }
 
     [Fact]
@@ -224,7 +239,7 @@ public sealed class AdapterBuildDefinitionsTests
         {
             if (request.FileName == "mvn")
             {
-                const string property = "-Dproject.build.directory=";
+                const string property = "-Dmerkle.build.directory=";
                 var destination = request.Arguments.Single(argument => argument.StartsWith(property, StringComparison.Ordinal))[property.Length..];
                 Directory.CreateDirectory(destination);
                 File.WriteAllText(Path.Combine(destination, "merkle-adapter-java.jar"), "invalid jar", Encoding.UTF8);
@@ -253,7 +268,7 @@ public sealed class AdapterBuildDefinitionsTests
         {
             if (request.FileName == "mvn")
             {
-                const string property = "-Dproject.build.directory=";
+                const string property = "-Dmerkle.build.directory=";
                 var destination = request.Arguments.Single(argument => argument.StartsWith(property, StringComparison.Ordinal))[property.Length..];
                 Directory.CreateDirectory(destination);
                 File.WriteAllText(Path.Combine(destination, "merkle-adapter-java-1.0.0.jar"), "shaded jar", Encoding.UTF8);
@@ -302,6 +317,18 @@ public sealed class AdapterBuildDefinitionsTests
     {
         var index = arguments.ToList().IndexOf(option);
         return arguments[index + 1];
+    }
+
+    private static string FindRepositoryRoot()
+    {
+        for (var directory = new DirectoryInfo(AppContext.BaseDirectory);
+             directory is not null;
+             directory = directory.Parent)
+        {
+            if (File.Exists(Path.Combine(directory.FullName, "Merkle.slnx"))) return directory.FullName;
+        }
+
+        throw new DirectoryNotFoundException("Could not locate the Merkle repository root.");
     }
 
     private sealed class ScriptedProcessRunner(Func<ProcessRequest, ProcessResult> script) : IProcessRunner

@@ -43,7 +43,7 @@ internal sealed class JavaBuildAdapter : BuildAdapterBase
         Directory.CreateDirectory(destination);
         var arguments = new List<string> { "-q", "package" };
         if (!request.RunTests) arguments.Add("-DskipTests");
-        arguments.Add($"-Dproject.build.directory={destination}");
+        arguments.Add($"-Dmerkle.build.directory={destination}");
         var build = await TryRunAsync("mvn", arguments, source, null, null, cancellationToken).ConfigureAwait(false);
         if (build is null || build.ExitCode != 0) return Failed(Definition, build is null ? "Maven could not be started." : Diagnostic(build));
         var jar = NormalizeJar(destination);

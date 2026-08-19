@@ -1,0 +1,4 @@
+interface:
+  display_name: "Contribute to Merkle"
+  short_description: "Navigate and verify Merkle contributions"
+  default_prompt: "Use $contribute-to-merkle to implement and verify a focused repository change."

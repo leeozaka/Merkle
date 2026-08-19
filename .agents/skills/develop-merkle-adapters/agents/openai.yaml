@@ -1,0 +1,4 @@
+interface:
+  display_name: "Develop Merkle Adapters"
+  short_description: "Build and integrate Merkle language adapters"
+  default_prompt: "Use $develop-merkle-adapters to add a Protocol 1.0 language adapter."

@@ -1,0 +1,4 @@
+interface:
+  display_name: "Change Merkle Planning Rules"
+  short_description: "Change Merkle planning and policy rules"
+  default_prompt: "Use $change-merkle-planning-rules to update Merkle selection or policy behavior safely."

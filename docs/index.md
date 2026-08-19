@@ -22,6 +22,7 @@ Merkle has an implementation of roadmap phases 0–5. This directory records the
 - [Roadmap](roadmap.md) defines phases and measurable exit criteria without calendar promises.
 - [Adapter authoring](adapter-authoring.md) defines the capability-negotiated contributor contract.
 - [Go adapter](go-adapter.md) documents the first-party worker, host operations, supported repository scope, and blind spots.
+- [Specification section 6b](specification.md#6b-merkle-source-build-requirements) defines selectable adapter source builds, policies, reports, manifests, and exit codes.
 - [CI and remote-state operations](operations.md) defines trusted-runner, cache, remote API, and release rules.
 - [Language options](language-options.md) compares likely core implementation languages and toolchains.
 - [Conversation decisions](conversation-decisions.md) preserves the evolution of the idea and the constraints agreed during discovery.

@@ -21,6 +21,7 @@ These records cover decisions that are expensive to reverse, surprising without 
 | [ADR-0015](0015-dotnet-10-native-aot-core.md) | Use C# on .NET 10 with Native AOT as the core toolchain | Accepted |
 | [ADR-0016](0016-startup-hook-observation.md) | Use a startup hook for dependency-free coarse .NET observation | Accepted |
 | [ADR-0017](0017-first-party-go-deep-adapter.md) | Ship a first-party deep Go adapter | Accepted |
+| [ADR-0018](0018-selectable-adapter-builds.md) | Build selected adapters through a dedicated helper | Accepted |
 
 ## Maintenance rules
 

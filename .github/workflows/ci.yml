@@ -24,6 +24,14 @@ jobs:
       - uses: actions/setup-go@v6
         with:
           go-version-file: src/adapters/go/worker/go.mod
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
+          cache: maven
       - uses: actions/setup-dotnet@v6
         with:
           dotnet-version: |
@@ -41,7 +49,8 @@ jobs:
       - run: dotnet build Merkle.slnx --configuration Release --no-restore --warnaserror
       - run: dotnet format Merkle.slnx --no-restore --verify-no-changes
       - run: dotnet test tests/Merkle.Tests/Merkle.Tests.csproj --configuration Release --no-build --no-restore
-      - run: dotnet publish src/cli/Merkle.Cli.csproj --configuration Release --runtime ${{ matrix.rid }} --self-contained true --no-restore --output artifacts/${{ matrix.rid }}
+      - name: Build the expanding adapter catalog
+        run: ./build publish --adapters all --adapter-policy strict --runtime ${{ matrix.rid }} --output artifacts/${{ matrix.rid }}
       - name: Smoke native package
         shell: bash
         run: |
@@ -49,6 +58,9 @@ jobs:
           test -f artifacts/${{ matrix.rid }}/workers/dotnet/Merkle.Adapters.DotNet.Worker.dll
           test -f artifacts/${{ matrix.rid }}/workers/dotnet/Merkle.Adapters.DotNet.Observer.dll
           test -x artifacts/${{ matrix.rid }}/workers/go/merkle-adapter-go
+          test -f artifacts/${{ matrix.rid }}/workers/python/merkle-adapter-python.pyz
+          test -f artifacts/${{ matrix.rid }}/workers/java/merkle-adapter-java.jar
+          test -f artifacts/${{ matrix.rid }}/adapters.json
           printf '%s' '{"protocolVersion":"1.0","requestId":"smoke","operation":"describe","payload":{}}' \
             | artifacts/${{ matrix.rid }}/workers/go/merkle-adapter-go \
             | grep -q '"language":"golang"'

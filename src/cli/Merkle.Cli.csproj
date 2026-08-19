@@ -7,13 +7,7 @@
     <Nullable>enable</Nullable>
     <PublishAot>true</PublishAot>
     <InvariantGlobalization>true</InvariantGlobalization>
-    <GoAdapterProjectDirectory>$(MSBuildProjectDirectory)/../adapters/go/worker</GoAdapterProjectDirectory>
-    <GoAdapterExecutableName>merkle-adapter-go</GoAdapterExecutableName>
-    <GoAdapterIntermediatePath>$(MSBuildProjectDirectory)/obj/$(Configuration)/$(TargetFramework)/$(RuntimeIdentifier)/go/$(GoAdapterExecutableName)</GoAdapterIntermediatePath>
-    <GoAdapterGoOs Condition="$(RuntimeIdentifier.StartsWith('linux-'))">linux</GoAdapterGoOs>
-    <GoAdapterGoOs Condition="$(RuntimeIdentifier.StartsWith('osx-'))">darwin</GoAdapterGoOs>
-    <GoAdapterGoArch Condition="$(RuntimeIdentifier.EndsWith('-x64'))">amd64</GoAdapterGoArch>
-    <GoAdapterGoArch Condition="$(RuntimeIdentifier.EndsWith('-arm64'))">arm64</GoAdapterGoArch>
+    <MerkleIncludeDotNetAdapter Condition="'$(MerkleIncludeDotNetAdapter)' == ''">true</MerkleIncludeDotNetAdapter>
   </PropertyGroup>
 
   <ItemGroup>
@@ -22,44 +16,23 @@
     <ProjectReference Include="../adapters/dotnet/Merkle.Adapters.DotNet.csproj" />
     <ProjectReference Include="../adapters/go/host/Merkle.Adapters.Go.csproj" />
     <ProjectReference Include="../adapters/dotnet/worker/Merkle.Adapters.DotNet.Worker.csproj"
+                      Condition="'$(MerkleIncludeDotNetAdapter)' == 'true'"
                       ReferenceOutputAssembly="false"
                       GlobalPropertiesToRemove="RuntimeIdentifier;SelfContained" />
     <ProjectReference Include="../adapters/dotnet/observer/Merkle.Adapters.DotNet.Observer.csproj"
+                      Condition="'$(MerkleIncludeDotNetAdapter)' == 'true'"
                       ReferenceOutputAssembly="false" />
   </ItemGroup>
 
-  <ItemGroup>
-    <GoAdapterSource Include="$(GoAdapterProjectDirectory)/**/*.go" />
-    <GoAdapterSource Include="$(GoAdapterProjectDirectory)/go.mod" />
-    <GoAdapterSource Include="$(GoAdapterProjectDirectory)/go.sum" Condition="Exists('$(GoAdapterProjectDirectory)/go.sum')" />
-  </ItemGroup>
-
-  <Target Name="BuildGoAdapter"
-          BeforeTargets="Build;Publish"
-          Inputs="@(GoAdapterSource)"
-          Outputs="$(GoAdapterIntermediatePath)">
-    <MakeDir Directories="$([System.IO.Path]::GetDirectoryName('$(GoAdapterIntermediatePath)'))" />
-    <Exec WorkingDirectory="$(GoAdapterProjectDirectory)"
-          Command="go build -trimpath -o &quot;$(GoAdapterIntermediatePath)&quot; ."
-          EnvironmentVariables="CGO_ENABLED=0;GOOS=$(GoAdapterGoOs);GOARCH=$(GoAdapterGoArch)"
-          Condition="'$(GoAdapterGoOs)' != '' and '$(GoAdapterGoArch)' != ''" />
-    <Exec WorkingDirectory="$(GoAdapterProjectDirectory)"
-          Command="go build -trimpath -o &quot;$(GoAdapterIntermediatePath)&quot; ."
-          EnvironmentVariables="CGO_ENABLED=0"
-          Condition="'$(GoAdapterGoOs)' == '' or '$(GoAdapterGoArch)' == ''" />
-  </Target>
-
-  <Target Name="CopyGoAdapterToBuild" AfterTargets="Build" DependsOnTargets="BuildGoAdapter">
-    <MakeDir Directories="$(OutDir)workers/go" />
-    <Copy SourceFiles="$(GoAdapterIntermediatePath)"
-          DestinationFiles="$(OutDir)workers/go/$(GoAdapterExecutableName)"
-          SkipUnchangedFiles="true" />
-  </Target>
-
-  <Target Name="CopyDotNetToolchain" AfterTargets="Publish">
+  <Target Name="CopyDotNetToolchain"
+          AfterTargets="Publish"
+          Condition="'$(MerkleIncludeDotNetAdapter)' == 'true'">
     <ItemGroup>
       <DotNetToolchainArtifact Include="$(MSBuildProjectDirectory)/../adapters/dotnet/worker/bin/$(Configuration)/net10.0/**/*"
-                              Exclude="$(MSBuildProjectDirectory)/../adapters/dotnet/worker/bin/$(Configuration)/net10.0/$(RuntimeIdentifier)/**/*" />
+                              Exclude="$(MSBuildProjectDirectory)/../adapters/dotnet/worker/bin/$(Configuration)/net10.0/$(RuntimeIdentifier)/**/*"
+                              Condition="'$(RuntimeIdentifier)' != ''" />
+      <DotNetToolchainArtifact Include="$(MSBuildProjectDirectory)/../adapters/dotnet/worker/bin/$(Configuration)/net10.0/**/*"
+                              Condition="'$(RuntimeIdentifier)' == ''" />
       <DotNetToolchainArtifact Include="$(MSBuildProjectDirectory)/../adapters/dotnet/observer/bin/$(Configuration)/net8.0/*" />
     </ItemGroup>
     <Copy SourceFiles="@(DotNetToolchainArtifact)"
@@ -71,13 +44,48 @@
            Text="The published CLI is missing the .NET startup-hook observer." />
   </Target>
 
-  <Target Name="CopyGoAdapterToPublish" AfterTargets="Publish" DependsOnTargets="BuildGoAdapter">
-    <MakeDir Directories="$(PublishDir)workers/go" />
-    <Copy SourceFiles="$(GoAdapterIntermediatePath)"
-          DestinationFiles="$(PublishDir)workers/go/$(GoAdapterExecutableName)"
-          SkipUnchangedFiles="true" />
-    <Error Condition="!Exists('$(PublishDir)workers/go/$(GoAdapterExecutableName)')"
-           Text="The published CLI is missing the Go language-adapter worker." />
+  <Target Name="WriteDotNetAdapterManifest"
+          AfterTargets="CopyDotNetToolchain"
+          Condition="'$(MerkleIncludeDotNetAdapter)' == 'true'">
+    <ItemGroup>
+      <_DotNetWorkerManifest Include="$(PublishDir)workers/dotnet/Merkle.Adapters.DotNet.Worker.dll" />
+      <_DotNetObserverManifest Include="$(PublishDir)workers/dotnet/Merkle.Adapters.DotNet.Observer.dll" />
+    </ItemGroup>
+    <GetFileHash Files="@(_DotNetWorkerManifest)" Algorithm="SHA256">
+      <Output TaskParameter="Items" ItemName="_HashedDotNetWorkerManifest" />
+    </GetFileHash>
+    <GetFileHash Files="@(_DotNetObserverManifest)" Algorithm="SHA256">
+      <Output TaskParameter="Items" ItemName="_HashedDotNetObserverManifest" />
+    </GetFileHash>
+    <PropertyGroup>
+      <_MerkleManifestRuntime Condition="'$(RuntimeIdentifier)' == ''">portable</_MerkleManifestRuntime>
+      <_MerkleManifestRuntime Condition="'$(RuntimeIdentifier)' != ''">$(RuntimeIdentifier)</_MerkleManifestRuntime>
+      <_DotNetWorkerHash>@(_HashedDotNetWorkerManifest->'%(FileHash)')</_DotNetWorkerHash>
+      <_DotNetObserverHash>@(_HashedDotNetObserverManifest->'%(FileHash)')</_DotNetObserverHash>
+      <_DotNetWorkerHash>$([System.String]::Copy('$(_DotNetWorkerHash)').ToLowerInvariant())</_DotNetWorkerHash>
+      <_DotNetObserverHash>$([System.String]::Copy('$(_DotNetObserverHash)').ToLowerInvariant())</_DotNetObserverHash>
+    </PropertyGroup>
+    <WriteLinesToFile
+      File="$(PublishDir)adapters.json"
+      Overwrite="true"
+      Lines="{
+  &quot;schemaVersion&quot;: 1,
+  &quot;merkleVersion&quot;: &quot;$(Version)&quot;,
+  &quot;configuration&quot;: &quot;$(Configuration)&quot;,
+  &quot;runtimeIdentifier&quot;: &quot;$(_MerkleManifestRuntime)&quot;,
+  &quot;adapters&quot;: [
+    {
+      &quot;id&quot;: &quot;dotnet&quot;,
+      &quot;version&quot;: &quot;$(Version)&quot;,
+      &quot;protocolVersion&quot;: &quot;1.0&quot;,
+      &quot;profile&quot;: &quot;deep&quot;,
+      &quot;artifacts&quot;: [
+        { &quot;path&quot;: &quot;workers/dotnet/Merkle.Adapters.DotNet.Worker.dll&quot;, &quot;sha256&quot;: &quot;$(_DotNetWorkerHash)&quot; },
+        { &quot;path&quot;: &quot;workers/dotnet/Merkle.Adapters.DotNet.Observer.dll&quot;, &quot;sha256&quot;: &quot;$(_DotNetObserverHash)&quot; }
+      ]
+    }
+  ]
+}" />
   </Target>
 
 </Project>

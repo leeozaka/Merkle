@@ -31,6 +31,7 @@
     <ProjectReference Include="../../src/adapters/dotnet/Merkle.Adapters.DotNet.csproj" />
     <ProjectReference Include="../../src/adapters/go/host/Merkle.Adapters.Go.csproj" />
     <ProjectReference Include="../../src/cli/Merkle.Cli.csproj" />
+    <ProjectReference Include="../../src/build/Merkle.Build.csproj" />
   </ItemGroup>
 
   <ItemGroup>

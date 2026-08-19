@@ -196,6 +196,55 @@ public sealed class AdapterBuildDefinitionsTests
     }
 
     [Fact]
+    public async Task JavaBuildReportsMissingJarBeforeStartingSmokeProcess()
+    {
+        using var repository = new TemporaryRepository();
+        repository.Write("src/adapters/java/pom.xml", "<project />");
+        var runner = new ScriptedProcessRunner(request => request.FileName == "mvn"
+            ? Result("")
+            : throw new InvalidOperationException("Java must not start without the expected JAR."));
+        var adapter = new AdapterBuildCatalog(runner).Resolve("java");
+        var readiness = new AdapterReadiness("java", AdapterReadinessStatus.Ready);
+
+        var result = await adapter.BuildAsync(
+            new AdapterBuildRequest(repository.Context, RunTests: false, readiness),
+            CancellationToken.None);
+
+        Assert.Equal(AdapterBuildStatus.Failed, result.Status);
+        Assert.Contains("did not produce", result.Diagnostic, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain(runner.Requests, request => request.FileName == "java");
+    }
+
+    [Fact]
+    public async Task JavaBuildIncludesSmokeProcessFailureInDiagnostic()
+    {
+        using var repository = new TemporaryRepository();
+        repository.Write("src/adapters/java/pom.xml", "<project />");
+        var runner = new ScriptedProcessRunner(request =>
+        {
+            if (request.FileName == "mvn")
+            {
+                const string property = "-Dproject.build.directory=";
+                var destination = request.Arguments.Single(argument => argument.StartsWith(property, StringComparison.Ordinal))[property.Length..];
+                Directory.CreateDirectory(destination);
+                File.WriteAllText(Path.Combine(destination, "merkle-adapter-java.jar"), "invalid jar", Encoding.UTF8);
+                return Result("");
+            }
+
+            return Result("", "no main manifest attribute", 1);
+        });
+        var adapter = new AdapterBuildCatalog(runner).Resolve("java");
+        var readiness = new AdapterReadiness("java", AdapterReadinessStatus.Ready);
+
+        var result = await adapter.BuildAsync(
+            new AdapterBuildRequest(repository.Context, RunTests: false, readiness),
+            CancellationToken.None);
+
+        Assert.Equal(AdapterBuildStatus.Failed, result.Status);
+        Assert.Contains("no main manifest attribute", result.Diagnostic, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public async Task PythonBuildReportsSelectedTestFailureBeforePackaging()
     {
         using var repository = new TemporaryRepository();

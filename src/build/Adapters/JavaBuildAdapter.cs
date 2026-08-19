@@ -47,8 +47,18 @@ internal sealed class JavaBuildAdapter : BuildAdapterBase
         var build = await TryRunAsync("mvn", arguments, source, null, null, cancellationToken).ConfigureAwait(false);
         if (build is null || build.ExitCode != 0) return Failed(Definition, build is null ? "Maven could not be started." : Diagnostic(build));
         var jar = Path.Combine(destination, "merkle-adapter-java.jar");
+        if (!File.Exists(jar))
+        {
+            return Failed(Definition, "Maven did not produce the expected Java adapter JAR.");
+        }
+
         var smoke = await TryRunAsync("java", ["-jar", jar], source, null, Encoding.UTF8.GetBytes(ProtocolRequest()), cancellationToken).ConfigureAwait(false);
-        if (!IsSuccessfulSmoke(smoke, "java")) return Failed(Definition, "The Java adapter failed the Protocol 1.0 describe smoke check.");
+        if (!IsSuccessfulSmoke(smoke, "java"))
+        {
+            var details = smoke is null ? "The Java process could not be started." : Diagnostic(smoke);
+            return Failed(Definition, $"The Java adapter failed the Protocol 1.0 describe smoke check: {details}");
+        }
+
         return await CompleteAsync(Definition, request.Context, [(jar, $"workers/{Definition.Id}/{Path.GetFileName(jar)}", "minimal")], cancellationToken).ConfigureAwait(false);
     }
 }

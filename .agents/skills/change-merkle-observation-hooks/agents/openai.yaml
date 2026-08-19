@@ -1,0 +1,4 @@
+interface:
+  display_name: "Change Merkle Observation Hooks"
+  short_description: "Change Merkle runtime observation hooks"
+  default_prompt: "Use $change-merkle-observation-hooks to modify runtime observation without weakening evidence integrity."

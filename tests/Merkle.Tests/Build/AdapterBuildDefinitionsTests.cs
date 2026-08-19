@@ -96,7 +96,131 @@ public sealed class AdapterBuildDefinitionsTests
         Assert.DoesNotContain("target", artifact.RelativePath, StringComparison.OrdinalIgnoreCase);
     }
 
+    [Fact]
+    public async Task DotNetBuildProducesWorkerAndObserverAfterProtocolSmoke()
+    {
+        using var repository = new TemporaryRepository();
+        repository.Write("global.json", "{\"sdk\":{\"version\":\"10.0.301\"}}");
+        var runner = new ScriptedProcessRunner(request =>
+        {
+            if (request.Arguments.SequenceEqual(["--version"])) return Result("10.0.301\n");
+            if (request.Arguments.Count > 0 && request.Arguments[0] == "build")
+            {
+                var destination = ArgumentValue(request.Arguments, "--output");
+                Directory.CreateDirectory(destination);
+                var fileName = request.Arguments[1].Contains("Worker", StringComparison.Ordinal)
+                    ? "Merkle.Adapters.DotNet.Worker.dll"
+                    : "Merkle.Adapters.DotNet.Observer.dll";
+                File.WriteAllText(Path.Combine(destination, fileName), fileName, Encoding.UTF8);
+                return Result("");
+            }
+
+            return Result("{\"protocolVersion\":\"1.0\",\"success\":true}\n");
+        });
+        var adapter = new AdapterBuildCatalog(runner).Resolve("dotnet");
+        var readiness = await adapter.PreflightAsync(repository.Context, CancellationToken.None);
+
+        var result = await adapter.BuildAsync(
+            new AdapterBuildRequest(repository.Context, RunTests: false, readiness),
+            CancellationToken.None);
+
+        Assert.Equal(AdapterBuildStatus.Built, result.Status);
+        Assert.Equal(2, result.Artifacts.Count);
+        Assert.Contains(result.Artifacts, artifact => artifact.RelativePath.EndsWith("Worker.dll", StringComparison.Ordinal));
+        Assert.Contains(result.Artifacts, artifact => artifact.RelativePath.EndsWith("Observer.dll", StringComparison.Ordinal));
+        Assert.Equal(3, runner.Requests.Count(request => request.FileName == "dotnet" && !request.Arguments.SequenceEqual(["--version"])));
+    }
+
+    [Fact]
+    public async Task GoBuildRunsSelectedTestsAndSmokesProducedExecutable()
+    {
+        using var repository = new TemporaryRepository();
+        repository.Write("src/adapters/go/worker/go.mod", "module merkle\n\ngo 1.22\n");
+        var runner = new ScriptedProcessRunner(request =>
+        {
+            if (request.FileName == "go" && request.Arguments.Contains("build"))
+            {
+                var executable = ArgumentValue(request.Arguments, "-o");
+                Directory.CreateDirectory(Path.GetDirectoryName(executable)!);
+                File.WriteAllText(executable, "go worker", Encoding.UTF8);
+                return Result("");
+            }
+
+            return request.FileName == "go"
+                ? Result("")
+                : Result("{\"protocolVersion\":\"1.0\",\"language\":\"golang\"}\n");
+        });
+        var adapter = new AdapterBuildCatalog(runner).Resolve("go");
+        var readiness = new AdapterReadiness("golang", AdapterReadinessStatus.Ready, DetectedVersion: "go1.22.0");
+
+        var result = await adapter.BuildAsync(
+            new AdapterBuildRequest(repository.Context, RunTests: true, readiness),
+            CancellationToken.None);
+
+        Assert.Equal(AdapterBuildStatus.Built, result.Status);
+        Assert.Single(result.Artifacts);
+        Assert.Contains(runner.Requests, request => request.FileName == "go" && request.Arguments.SequenceEqual(["test", "./..."]));
+        Assert.Contains(runner.Requests, request => request.FileName != "go" && request.StandardInput.HasValue);
+    }
+
+    [Fact]
+    public async Task JavaBuildRunsSelectedTestsAndSmokesProducedJar()
+    {
+        using var repository = new TemporaryRepository();
+        repository.Write("src/adapters/java/pom.xml", "<project><properties><maven.compiler.source>17</maven.compiler.source></properties></project>");
+        var runner = new ScriptedProcessRunner(request =>
+        {
+            if (request.FileName == "mvn")
+            {
+                const string property = "-Dproject.build.directory=";
+                var destination = request.Arguments.Single(argument => argument.StartsWith(property, StringComparison.Ordinal))[property.Length..];
+                Directory.CreateDirectory(destination);
+                File.WriteAllText(Path.Combine(destination, "merkle-adapter-java.jar"), "java worker", Encoding.UTF8);
+                return Result("");
+            }
+
+            return Result("{\"protocolVersion\":\"1.0\",\"language\":\"java\"}\n");
+        });
+        var adapter = new AdapterBuildCatalog(runner).Resolve("java");
+        var readiness = new AdapterReadiness("java", AdapterReadinessStatus.Ready, DetectedVersion: "OpenJDK 21");
+
+        var result = await adapter.BuildAsync(
+            new AdapterBuildRequest(repository.Context, RunTests: true, readiness),
+            CancellationToken.None);
+
+        Assert.Equal(AdapterBuildStatus.Built, result.Status);
+        Assert.Single(result.Artifacts);
+        var maven = Assert.Single(runner.Requests, request => request.FileName == "mvn");
+        Assert.DoesNotContain("-DskipTests", maven.Arguments);
+        Assert.Contains(runner.Requests, request => request.FileName == "java" && request.Arguments[0] == "-jar");
+    }
+
+    [Fact]
+    public async Task PythonBuildReportsSelectedTestFailureBeforePackaging()
+    {
+        using var repository = new TemporaryRepository();
+        repository.Write("src/adapters/python/pyproject.toml", "[project]\nrequires-python = \">=3.10\"\n");
+        var runner = new ScriptedProcessRunner(_ => Result("", "python tests failed", 1));
+        var adapter = new AdapterBuildCatalog(runner).Resolve("python");
+        var readiness = new AdapterReadiness("python", AdapterReadinessStatus.Ready, DetectedVersion: "Python 3.12.4");
+
+        var result = await adapter.BuildAsync(
+            new AdapterBuildRequest(repository.Context, RunTests: true, readiness),
+            CancellationToken.None);
+
+        Assert.Equal(AdapterBuildStatus.Failed, result.Status);
+        Assert.Equal("python tests failed", result.Diagnostic);
+        Assert.Single(runner.Requests, request => request.Arguments.Contains("unittest"));
+        Assert.Empty(result.Artifacts);
+    }
+
     private static ProcessResult Result(string stdout, string stderr = "", int exitCode = 0) => new(exitCode, stdout, stderr);
+
+    private static string ArgumentValue(IReadOnlyList<string> arguments, string option)
+    {
+        var index = arguments.ToList().IndexOf(option);
+        return arguments[index + 1];
+    }
 
     private sealed class ScriptedProcessRunner(Func<ProcessRequest, ProcessResult> script) : IProcessRunner
     {

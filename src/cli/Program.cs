@@ -167,6 +167,8 @@ static string? FindArtifact(string repositoryRoot, string environmentVariable, s
         configured,
         Path.Combine(AppContext.BaseDirectory, "workers", "dotnet", fileName),
         Path.Combine(AppContext.BaseDirectory, "workers", "go", fileName),
+        Path.Combine(AppContext.BaseDirectory, "workers", "python", fileName),
+        Path.Combine(AppContext.BaseDirectory, "workers", "java", fileName),
         Path.Combine(AppContext.BaseDirectory, fileName),
         Path.Combine(repositoryRoot, "src", "adapters", "python", fileName),
         Path.Combine(repositoryRoot, "src", "adapters", "java", "target", fileName),

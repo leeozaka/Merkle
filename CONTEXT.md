@@ -118,6 +118,22 @@ _Avoid_: Basic adapter, partial adapter, file adapter
 A language adapter that can also discover, observe, execute, and report tests for its ecosystem.
 _Avoid_: Full adapter, official adapter, complete adapter
 
+**Adapter Catalog**:
+The set of language adapters whose source and build definition are present in the Merkle repository. Catalog membership does not imply that the current machine has the required toolchain.
+_Avoid_: Installed adapters, detected languages, available toolchains
+
+**Adapter Build**:
+A source build of Merkle that requests one or more catalog adapters for inclusion in the resulting application. It is separate from the analysis build that a deep adapter performs against a repository under test.
+_Avoid_: Analysis build, target build
+
+**Adapter Build Policy**:
+The rule that decides whether one adapter's unavailable toolchain or failed build aborts an adapter build or permits the remaining requested adapters to continue. The policies are strict and best effort.
+_Avoid_: Error mode, warning mode
+
+**Bundled Adapter**:
+A requested language adapter whose current-run artifact passed its build and smoke checks and is included in the resulting application.
+_Avoid_: Selected adapter, installed adapter, detected adapter
+
 ## State lifecycle
 
 **Run Journal**:

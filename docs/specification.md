@@ -106,6 +106,44 @@ See [Adapter authoring](adapter-authoring.md) for protocol 1.0.
 
 ADR-0016 selects a managed startup hook. Observation is complete only at assembly/project granularity and must report the member, reflection, native, child-process, pre-hook-load, and identity-correlation blind spots.
 
+## 6b. Merkle source-build requirements
+
+These requirements govern building Merkle itself. They do not change the analysis-build contract in sections 6 and 6a.
+
+- **B-001:** A repository-owned .NET helper, launched through `./build`, must be the canonical interface for configurable adapter builds. It must expose `build` and `publish` commands.
+- **B-002:** The adapter catalog initially contains `dotnet`, `golang`, `python`, and `java`. The helper must accept `go` as an alias for `golang`. `all` must expand from catalog membership, independent of local toolchain availability.
+- **B-003:** A local build with no explicit adapter selection must request only `dotnet`. The default adapter build policy must be `strict`.
+- **B-004:** The .NET SDK selected by `global.json` is a host prerequisite for every invocation. The .NET language adapter must remain selectable.
+- **B-005:** Preflight must inspect every selected adapter before compilation. A missing executable or unsupported tool version makes that adapter unavailable and must report the required and detected versions when known.
+- **B-006:** Strict policy must stop before compilation when any selected adapter is unavailable. After successful preflight, it must stop at the first adapter build, test, artifact, or smoke failure.
+- **B-007:** Best-effort policy must skip unavailable adapters and continue after adapter-scoped failures. It must fail without building the host when no selected adapter succeeds.
+- **B-008:** Missing prerequisites are `skipped`. Compiler, selected test, missing expected artifact, launch, or protocol smoke failures are `failed`. Disk, permission, helper, manifest, host, and packaging failures are global.
+- **B-009:** A selected adapter counts as `built` only when the current invocation creates its expected artifact and the artifact passes a protocol smoke check. Pre-existing output cannot satisfy the current invocation.
+- **B-010:** `--test` must run helper/host tests and tests owned by each selected adapter. Helper and host test failures are global; adapter test failures follow the adapter build policy. Smoke checks remain mandatory without `--test`.
+- **B-011:** Adapter execution must default to sequential scheduling. `--builds parallel` must use bounded concurrency. Strict parallel failure must cancel in-flight adapter work, start no queued work, and prevent host publication.
+- **B-012:** The host must build after the successful adapter set is known. A completed output must be promoted atomically; a failed or cancelled run must preserve any previous helper-owned destination.
+- **B-013:** A custom non-empty output directory that is not recognizably helper-owned must be rejected. Cleanup must remain inside helper-owned intermediate, run-report, or output paths.
+- **B-014:** Each package must contain a deterministic `adapters.json` listing only bundled adapters, their canonical IDs, versions, protocol/profile metadata, relative artifact paths, and checksums. Local paths and wall-clock timestamps are forbidden in the package manifest.
+- **B-015:** Every helper invocation that passes argument validation must write a build report and per-adapter logs outside the package. `--no-warnings` affects console warnings only.
+- **B-016:** Adapter terminal states are `built`, `skipped`, `failed`, `cancelled`, and `not-run`. Overall states are `success`, `partial-success`, `failed`, and `cancelled`.
+- **B-017:** Helper exit codes are 0 for complete or accepted partial success, 2 for invalid invocation, 3 for strict adapter failure or zero successful adapters, 4 for helper/host/packaging failure, and 130 for interruption.
+- **B-018:** Text output must retain a final summary when warnings are hidden. `--format json` must be non-interactive and emit one structured result on standard output; diagnostics belong on standard error.
+- **B-019:** Interactive mode must show every catalog adapter and its readiness, keep unavailable adapters selectable, and let a user revise a strict selection that cannot succeed. Non-interactive mode must never prompt.
+- **B-020:** `build` defaults to Debug. `publish` defaults to Release and the current supported runtime identifier. Publish targets must match the builder's operating system and architecture so every bundled artifact can run its smoke check.
+- **B-021:** Plain `dotnet build` and `dotnet publish` must not invoke optional adapter toolchains and must produce the default .NET-only application. Direct publication must still emit a .NET-only `adapters.json`.
+- **B-022:** The helper must not install toolchains. It resolves standard commands and ecosystem variables, derives version requirements from repository sources, and reports installation guidance for unavailable selections.
+- **B-023:** The helper may leave compiler intermediates after a failed run. It must never include stale artifacts in the promoted package.
+- **B-024:** Official releases must name `dotnet,golang,python,java` explicitly and use strict policy. CI must also exercise the expanding `all` catalog and controlled strict, best-effort, zero-success, cancellation, and stale-artifact cases.
+
+The four acceptance cases that selected this contract are:
+
+| Selection | Policy | Java toolchain unavailable | Required result |
+|---|---|---|---|
+| `all` | strict | Detected during preflight | Exit 3; build no adapter or host output |
+| `all` | best effort | Java is skipped | Build .NET, Go, and Python; report partial success; exit 0 |
+| `java` | strict | Detected during preflight | Exit 3; build no host output |
+| `java` | best effort | Java is skipped and no adapter remains | Exit 3; build no host output |
+
 ## 7. Historical and statistical requirements
 
 - **H-001:** Only terminal runs may contribute historical evidence.

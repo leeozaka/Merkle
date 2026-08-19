@@ -2,7 +2,7 @@
 
 Merkle is a self-hosted test-impact assistant. It compares a baseline repository snapshot with a candidate snapshot, identifies changed source units, traces their likely impact, and returns an explainable list of relevant tests.
 
-**Status:** Roadmap phases 0–5 are implemented behind versioned seams. The C#/.NET 10 CLI supports first-party deep .NET and Go adapters, policy-gated selected execution, local/remote history, and transactional state. Runtime observation is intentionally coarse: .NET records assembly/project evidence and Go records file-level coverage, with explicit blind spots for each adapter.
+**Status:** Roadmap phases 0–5 are implemented behind versioned seams. The C#/.NET 10 CLI supports first-party deep .NET and Go adapters plus minimal Python and Java adapters, policy-gated selected execution, local/remote history, and transactional state. Runtime observation is intentionally coarse: .NET records assembly/project evidence and Go records file-level coverage, with explicit blind spots for each adapter.
 
 The designed RFC is available as [Word](Merkle-Test-Impact-System-Design.docx) and [PDF](Merkle-Test-Impact-System-Design.pdf). Those rendered artifacts predate ADR-0015; the Markdown specification and ADRs are authoritative for the .NET 10 decision. See the [QA report](QA-REPORT.md) for render, accessibility, privacy, and package checks.
 
@@ -192,4 +192,6 @@ Copyable files are included in [`examples/merkle.yml`](examples/merkle.yml) and 
 
 ## Build and release
 
-The Native AOT CLI keeps Roslyn and test-platform work in companion managed processes and bundles the Go protocol worker. CI builds and tests on macOS and Linux, enforces 80% aggregate line and branch coverage, publishes self-contained artifacts for x64 and Arm64, and attaches signed GitHub build-provenance attestations. Analyzed repositories receive no package or project changes.
+Run `./build build` for the default strict .NET-only development build. Use `./build publish --adapters all --adapter-policy strict` when every repository adapter and toolchain is required, or choose `best-effort` for a package containing only successful selections. See [Build and usage](USAGE.md) for flags, output layout, and failure behavior.
+
+The Native AOT CLI keeps Roslyn and test-platform work in companion managed processes. CI builds and tests on macOS and Linux, enforces 80% aggregate line and branch coverage, publishes self-contained artifacts for x64 and Arm64, and attaches signed GitHub build-provenance attestations. Analyzed repositories receive no package or project changes.

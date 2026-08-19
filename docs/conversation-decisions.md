@@ -431,3 +431,15 @@ These items are consistent with the conversation but were not explicitly frozen 
 ## Change control for this record
 
 Future conversations should append or amend decisions by ID. A later explicit choice supersedes an earlier idea; keep the old entry as history and point it to the replacement. The early TypeScript idea stays in the chronology and points to its removal in decision 27.
+
+## 38. Selectable adapter source builds
+
+**User decision.** People building Merkle may choose any repository-owned adapter or `all`. The build uses strict policy by default. Best-effort policy skips unavailable adapters and continues after adapter failures, but it never produces an application when every requested adapter fails.
+
+**User decision.** The source build is a .NET helper with a `./build` launcher, interactive selection for terminals, and flags for automation. The default selection is the .NET adapter. The .NET SDK remains mandatory for the host even when the .NET adapter is not selected.
+
+**User decision.** Selected adapters must produce current-run artifacts and pass smoke checks. Successful outputs contain only successful adapter payloads and a deterministic manifest. A separate report records unavailable, failed, cancelled, and unattempted adapters. Strict failure preserves the previous successful output; best-effort partial success exits 0 with warnings and a visible summary.
+
+**User decision.** Adapter builds may run sequentially or with bounded parallelism. This does not change runtime analysis or deep-observation scheduling. Official releases pin .NET, Go, Python, and Java under strict policy; future TypeScript support joins the catalog only after its own implementation is added.
+
+The normative contract is in [section 6b of the specification](specification.md#6b-merkle-source-build-requirements). [ADR-0018](adr/0018-selectable-adapter-builds.md) records the build-helper and packaging decision.

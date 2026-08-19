@@ -7,7 +7,7 @@
 graphify-out/
 TestResults/
 coverage/
+artifacts/
 *.user
 *.suo
-
 

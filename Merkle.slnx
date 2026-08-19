@@ -1,5 +1,6 @@
 <Solution>
   <Folder Name="/src/">
+    <Project Path="src/build/Merkle.Build.csproj" />
     <Project Path="src/adapters/dotnet/Merkle.Adapters.DotNet.csproj" />
     <Project Path="src/adapters/dotnet/observer/Merkle.Adapters.DotNet.Observer.csproj" />
     <Project Path="src/adapters/dotnet/worker/Merkle.Adapters.DotNet.Worker.csproj" />

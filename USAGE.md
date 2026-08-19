@@ -1,19 +1,32 @@
 ## Build for local development
 
-Install the .NET 10.0.301 SDK or a compatible later patch and Go 1.22 or newer. The repository's `global.json` selects the .NET SDK family. The .NET 8 runtime is also used by the startup-hook observer; Go builds and tests the bundled Go worker.
+Install the .NET SDK selected by `global.json`. It is required for every source build. Go, Python, and a Java JDK with Maven are needed only when you select their adapters.
 
 From the Merkle source directory:
 
 ```bash
-dotnet restore Merkle.slnx
-dotnet build Merkle.slnx --configuration Debug --no-restore
-dotnet test tests/Merkle.Tests/Merkle.Tests.csproj \
-  --configuration Debug \
-  --no-build \
-  --no-restore
+./build build
 ```
 
-The test project enforces at least 80% aggregate line and branch coverage.
+This defaults to the .NET adapter, strict failure handling, sequential execution, and a Debug build. With an interactive terminal, running `./build` with no arguments shows adapter readiness and prompts for the selection. Automation should pass arguments explicitly:
+
+```bash
+./build build \
+  --adapters dotnet,golang,python \
+  --adapter-policy best-effort \
+  --builds parallel \
+  --max-parallel 3 \
+  --test \
+  --format json
+```
+
+Run `./build --help` for the complete flag list. `--clean` removes only stale intermediate directories carrying a Merkle ownership marker; it does not remove the previous successful package or user-owned directories.
+
+`--adapters all` selects every adapter registered in the repository even when its toolchain is missing. Strict policy preflights the whole selection and builds nothing if any selected toolchain is unavailable. Best effort skips unavailable adapters and continues after adapter failures; it still fails when no adapter succeeds. Exit codes are 0 for success or accepted partial success, 2 for invalid arguments, 3 for adapter-policy failure, 4 for helper/host/package failure, and 130 for cancellation.
+
+Build reports and per-adapter logs stay beside the run directory, outside the promoted package. Default packages are written beneath `artifacts/build/<configuration>/<runtime>` or `artifacts/publish/<configuration>/<runtime>`. Use `--output` and `--report` to choose explicit locations.
+
+Plain `dotnet build` and `dotnet publish` remain available for .NET-only output and do not invoke Go, Python, or Java. The test project enforces at least 80% aggregate line and branch coverage.
 
 ### Run the development build against a repository
 
@@ -33,7 +46,7 @@ Run all later examples by replacing `merkle` with that `dotnet ...Merkle.Cli.dll
 
 ## Publish a native package
 
-Choose the runtime identifier that matches the machine where Merkle will run:
+The helper publishes for the current machine because every selected adapter must run its smoke check before packaging:
 
 | Platform | Runtime identifier |
 |---|---|
@@ -42,19 +55,15 @@ Choose the runtime identifier that matches the machine where Merkle will run:
 | macOS Intel | `osx-x64` |
 | macOS Apple silicon | `osx-arm64` |
 
-The following example publishes for Apple silicon. Change `MERKLE_RID` for another supported target.
+For example, publish all current adapters on Apple silicon with:
 
 ```bash
 export MERKLE_RID=osx-arm64
 
-dotnet restore Merkle.slnx
-dotnet restore src/cli/Merkle.Cli.csproj --runtime "$MERKLE_RID"
-dotnet build Merkle.slnx --configuration Release --no-restore
-dotnet publish src/cli/Merkle.Cli.csproj \
-  --configuration Release \
+./build publish \
+  --adapters all \
+  --adapter-policy strict \
   --runtime "$MERKLE_RID" \
-  --self-contained true \
-  --no-restore \
   --output "artifacts/$MERKLE_RID"
 ```
 
@@ -65,9 +74,9 @@ Smoke-test the package:
 "artifacts/$MERKLE_RID/Merkle.Cli" state status
 ```
 
-Deploy the entire output directory. The native executable needs the SQLite library and the files beneath `workers/dotnet` and `workers/go`; copying only `Merkle.Cli` disables semantic and deep analysis.
+Deploy the entire output directory. Copying only `Merkle.Cli` omits selected adapter payloads and `adapters.json`.
 
-The package is self-contained for the CLI and bundles the Go protocol worker, but deep analysis still invokes the target repository's system `dotnet` or `go`. Install Git and the toolchain required by that repository. Merkle honors .NET `global.json`, supports projects targeting .NET 6 or later, and requires Go 1.22 or newer for Go deep analysis.
+The package is self-contained for the CLI. Deep analysis still invokes toolchains required by the repository being analyzed. Install Git and those project toolchains on the runtime machine.
 
 On a CI runner, unpack the directory into a fixed location and invoke the executable by its absolute path. The examples below use `merkle` as shorthand for that path.
 

@@ -5,6 +5,21 @@ namespace Merkle.Tests.Installation;
 public sealed class LocalInstallerTests
 {
     [Fact]
+    public void DockerfileRestoresRuntimeCachePermissionsAfterPublishing()
+    {
+        var dockerfile = File.ReadAllText(Path.Combine(FindRepositoryRoot(), "Dockerfile"));
+        var publish = dockerfile.IndexOf("./build publish", StringComparison.Ordinal);
+        var finalPermissionRepair = dockerfile.LastIndexOf(
+            "chmod -R 0777 /var/cache/merkle",
+            StringComparison.Ordinal);
+
+        Assert.True(publish >= 0, "Dockerfile must publish the Merkle runtime.");
+        Assert.True(
+            finalPermissionRepair > publish,
+            "Dockerfile must restore non-root cache permissions after the root-owned publish step.");
+    }
+
+    [Fact]
     public async Task HelpDescribesVersionAndAdapterSelectionWithoutProvisioning()
     {
         if (!OperatingSystem.IsLinux() && !OperatingSystem.IsMacOS())

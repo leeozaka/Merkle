@@ -167,7 +167,24 @@ public sealed class LocalStateStoreTests
             await store.PublishAsync(journal, Report("run-1"), default));
 
         Assert.Equal("ReportSizeLimitExceeded", error.Code);
+        Assert.Contains("limit 10 bytes", error.Message, StringComparison.Ordinal);
         Assert.Null(await store.ReadCurrentAsync(default));
+    }
+
+    [Fact]
+    public async Task Publish_DefaultLimitAcceptsReportAboveLegacySixteenMiBCeiling()
+    {
+        using var directory = new TemporaryDirectory();
+        var store = new LocalStateStore(directory.Path, ".merkle", "repo-1");
+        var journal = await store.BeginRunAsync("run-1", default);
+        var report = Report("run-1") with
+        {
+            Warnings = [new string('x', 17 * 1024 * 1024)]
+        };
+
+        await store.PublishAsync(journal, report, default);
+
+        Assert.Equal("run-1", (await store.ReadCurrentAsync(default))?.RunId);
     }
 
     [Fact]

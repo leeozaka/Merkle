@@ -30,6 +30,7 @@ public sealed class ImpactEngineTests
         Assert.Equal(2, events.Count(item => item.StartsWith("index:", StringComparison.Ordinal)));
         Assert.DoesNotContain("execute", events);
         Assert.Equal(TerminalStatus.Succeeded, result.TerminalStatus);
+        Assert.Equal(64 * 1024 * 1024, result.Limits?.ReportByteLimit);
     }
 
     [Fact]

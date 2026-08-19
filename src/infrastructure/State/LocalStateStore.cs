@@ -34,7 +34,7 @@ public sealed class LocalStateStore : IStateStore, IStatePublicationStore, IInde
         string repositoryRoot,
         string stateDirectory,
         string repositoryIdentity,
-        int maxReportBytes = 16_777_216,
+        int maxReportBytes = TerminalReportLimits.MaximumBytes,
         SecretRedactor? redactor = null)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(repositoryRoot);
@@ -87,9 +87,12 @@ public sealed class LocalStateStore : IStateStore, IStatePublicationStore, IInde
         await EnsureInitializedAsync(cancellationToken).ConfigureAwait(false);
         ValidateJournal(journal);
         var json = _redactor.Redact(JsonSerializer.Serialize(report, MerkleJsonContext.Default.TerminalReport));
-        if (Encoding.UTF8.GetByteCount(json) > _maxReportBytes)
+        var reportBytes = Encoding.UTF8.GetByteCount(json);
+        if (reportBytes > _maxReportBytes)
         {
-            throw new AnalysisException("ReportSizeLimitExceeded", "The terminal report exceeds the configured byte limit.");
+            throw new AnalysisException(
+                "ReportSizeLimitExceeded",
+                $"The terminal report is {reportBytes} bytes and exceeds the configured limit {_maxReportBytes} bytes.");
         }
 
         await using var connection = await OpenAsync(cancellationToken).ConfigureAwait(false);

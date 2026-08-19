@@ -271,11 +271,11 @@ public sealed class CliApplication
                     $"The terminal report '{path}' does not exist.");
             }
 
-            if (file.Length > 16 * 1024 * 1024)
+            if (file.Length > TerminalReportLimits.MaximumBytes)
             {
                 throw new ConfigurationException(
                     "ImportReportTooLarge",
-                    "The terminal report exceeds the 16 MiB import limit.");
+                    "The terminal report exceeds the 64 MiB import limit.");
             }
 
             await using var stream = file.OpenRead();

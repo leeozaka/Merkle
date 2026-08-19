@@ -22,6 +22,7 @@ These records cover decisions that are expensive to reverse, surprising without 
 | [ADR-0016](0016-startup-hook-observation.md) | Use a startup hook for dependency-free coarse .NET observation | Accepted |
 | [ADR-0017](0017-first-party-go-deep-adapter.md) | Ship a first-party deep Go adapter | Accepted |
 | [ADR-0018](0018-selectable-adapter-builds.md) | Build selected adapters through a dedicated helper | Accepted |
+| [ADR-0019](0019-containerized-local-agent-runtime.md) | Run local agent installations through a containerized Merkle runtime | Accepted |
 
 ## Maintenance rules
 

@@ -366,3 +366,11 @@ ADR-0015 closed the language gate after the vertical spike covered:
 - reproduce one crash/recovery scenario.
 
 The result is the .NET 10 Native AOT CLI, a managed Roslyn worker, a managed startup-hook observer, SQLite schema 2, and protocol 1.0. CI publishes and smoke-tests target-specific macOS/Linux archives.
+
+## 15. Local agent installation
+
+Keep the host boundary narrow. `./install` depends only on Git, Docker Compose v2, and a POSIX shell. It resolves official source, asks the existing build helper for a strict Linux package, records an immutable installation manifest, and promotes `current` only after image and CLI smoke checks pass.
+
+The installed wrapper owns version selection, repository discovery, linked-worktree mounts, UID/GID mapping, dependency-cache volumes, locks, and explicit runtime customization. Existing CLI arguments pass through unchanged. Keep target repository configuration in `.merkle.yml`; keep container-only choices in `.merkle-runtime.yml` and exact installation selection in `.merkle-version`.
+
+Test installation behavior through fake Git and Docker process boundaries. Exercise real Compose schema validation without a daemon, then build and smoke representative all-adapter and reduced-adapter images on native `amd64` and `arm64` environments. Manual acceptance covers macOS Intel and Apple Silicon, Linux on both architectures, and WSL2 on its Linux filesystem until CI owns that matrix.

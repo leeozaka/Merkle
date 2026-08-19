@@ -1,0 +1,454 @@
+#!/bin/sh
+set -eu
+
+fail() {
+    printf 'merkle: %s\n' "$1" >&2
+    exit "${2:-1}"
+}
+
+manifest_value() {
+    key=$1
+    manifest=$2
+    awk -F= -v wanted="$key" '$1 == wanted { sub(/^[^=]*=/, ""); print; exit }' "$manifest"
+}
+
+data_root=${MERKLE_DATA_HOME:-"${XDG_DATA_HOME:-$HOME/.local/share}/merkle"}
+cache_root=${MERKLE_CACHE_HOME:-"${XDG_CACHE_HOME:-$HOME/.cache}/merkle"}
+installs_root="$data_root/installs"
+
+current_installation() {
+    [ -d "$data_root/current" ] || fail "no current installation; run merkle install"
+    (CDPATH= cd -- "$data_root/current" && pwd -P)
+}
+
+promote_current() {
+    install_id=$1
+    temporary_link="$data_root/.current.$$"
+    rm -f "$temporary_link"
+    ln -s "installs/$install_id" "$temporary_link"
+    mv -f "$temporary_link" "$data_root/current"
+}
+
+validate_install_id() {
+    case "$1" in ''|*[!A-Za-z0-9._-]*) fail "invalid installation ID '$1'" 2 ;; esac
+}
+
+list_installations() {
+    [ -d "$installs_root" ] || exit 0
+    current=""
+    if [ -d "$data_root/current" ]; then current=$(current_installation); fi
+    for manifest in "$installs_root"/*/install.env; do
+        [ -f "$manifest" ] || continue
+        directory=$(dirname "$manifest")
+        marker=" "
+        if [ "$directory" = "$current" ]; then marker="*"; fi
+        printf '%s %s  ref=%s  adapters=%s  arch=%s\n' \
+            "$marker" \
+            "$(manifest_value installation_id "$manifest")" \
+            "$(manifest_value resolved_ref "$manifest")" \
+            "$(manifest_value adapters "$manifest")" \
+            "$(manifest_value architecture "$manifest")"
+    done
+}
+
+use_installation() {
+    [ "$#" -ge 1 ] || fail "use requires an installation ID" 2
+    install_id=$1
+    validate_install_id "$install_id"
+    installation="$installs_root/$install_id"
+    [ -f "$installation/install.env" ] || fail "installation '$install_id' does not exist" 2
+    if [ "${2:-}" = "--project" ]; then
+        working_directory=$(pwd -P)
+        repository_root=$(git -C "$working_directory" rev-parse --show-toplevel 2>/dev/null) || fail "--project requires a Git working tree"
+        cat > "$repository_root/.merkle-version" <<EOF
+version: $(manifest_value resolved_ref "$installation/install.env")
+commit: $(manifest_value commit "$installation/install.env")
+architecture: $(manifest_value architecture "$installation/install.env")
+adapters: $(manifest_value adapters "$installation/install.env")
+installation_id: $install_id
+EOF
+        printf 'Pinned this repository to %s.\n' "$install_id"
+        return
+    fi
+    promote_current "$install_id"
+    printf 'Using Merkle installation %s.\n' "$install_id"
+}
+
+select_from_pin() {
+    repository_root=$1
+    pin="$repository_root/.merkle-version"
+    [ -f "$pin" ] || return 1
+    version=$(awk -F: '$1 == "version" { sub(/^[^:]*:[[:space:]]*/, ""); print; exit }' "$pin")
+    commit=$(awk -F: '$1 == "commit" { sub(/^[^:]*:[[:space:]]*/, ""); print; exit }' "$pin")
+    architecture=$(awk -F: '$1 == "architecture" { sub(/^[^:]*:[[:space:]]*/, ""); print; exit }' "$pin")
+    adapters=$(awk -F: '$1 == "adapters" { sub(/^[^:]*:[[:space:]]*/, ""); print; exit }' "$pin")
+    pinned_install_id=$(awk -F: '$1 == "installation_id" { sub(/^[^:]*:[[:space:]]*/, ""); print; exit }' "$pin")
+    [ -n "$version" ] && [ -n "$commit" ] && [ -n "$architecture" ] && [ -n "$adapters" ] && [ -n "$pinned_install_id" ] ||
+        fail "malformed .merkle-version; version, commit, architecture, adapters, and installation_id are required"
+    validate_install_id "$pinned_install_id"
+    manifest="$installs_root/$pinned_install_id/install.env"
+    [ -f "$manifest" ] || fail "the Merkle variant pinned by .merkle-version is not installed"
+    [ "$(manifest_value resolved_ref "$manifest")" = "$version" ] &&
+        [ "$(manifest_value commit "$manifest")" = "$commit" ] &&
+        [ "$(manifest_value architecture "$manifest")" = "$architecture" ] &&
+        [ "$(manifest_value adapters "$manifest")" = "$adapters" ] &&
+        [ "$(manifest_value installation_id "$manifest")" = "$pinned_install_id" ] ||
+        fail ".merkle-version does not match its installation manifest"
+    printf '%s\n' "$installs_root/$pinned_install_id"
+}
+
+doctor() {
+    installation=$(current_installation)
+    manifest="$installation/install.env"
+    [ -f "$manifest" ] || fail "current installation has no manifest"
+    command -v git >/dev/null 2>&1 || fail "Git is unavailable"
+    command -v docker >/dev/null 2>&1 || fail "Docker is unavailable"
+    docker compose version >/dev/null 2>&1 || fail "Docker Compose v2 is unavailable"
+    docker_host=$(docker context inspect --format '{{ (index .Endpoints "docker").Host }}' 2>/dev/null) || fail "the active Docker context cannot be inspected"
+    case "$docker_host" in unix://*) ;; *) fail "the active Docker context is remote; select a local Docker context" ;; esac
+    image=$(manifest_value image "$manifest")
+    install_id=$(manifest_value installation_id "$manifest")
+    adapters=$(manifest_value adapters "$manifest")
+    runtime=$(manifest_value runtime "$manifest")
+    architecture=$(docker info --format '{{.Architecture}}' 2>/dev/null) || fail "the local Docker engine is unavailable"
+    case "$architecture" in amd64|x86_64) architecture=amd64 ;; arm64|aarch64) architecture=arm64 ;; esac
+    [ "$architecture" = "$(manifest_value architecture "$manifest")" ] || fail "Docker architecture does not match the selected installation"
+    expected_image_id=$(manifest_value image_id "$manifest")
+    actual_image_id=$(docker image inspect --format '{{.Id}}' "$image" 2>/dev/null) || fail "installed image '$image' is unavailable"
+    [ "$actual_image_id" = "$expected_image_id" ] || fail "installed image ID does not match the installation manifest"
+    owner=$(docker image inspect --format '{{ index .Config.Labels "org.merkle.installation-id" }}' "$image" 2>/dev/null) || fail "installed image labels are unavailable"
+    [ "$owner" = "$install_id" ] || fail "installed image is not owned by installation '$install_id'"
+    managed=$(docker image inspect --format '{{ index .Config.Labels "org.merkle.managed" }}' "$image" 2>/dev/null) || fail "installed image labels are unavailable"
+    [ "$managed" = "true" ] || fail "installed image is missing the Merkle ownership label"
+    image_adapters=$(docker image inspect --format '{{ index .Config.Labels "org.merkle.adapters" }}' "$image" 2>/dev/null) || fail "installed adapter labels are unavailable"
+    [ "$image_adapters" = "$adapters" ] || fail "installed image adapter set does not match the installation manifest"
+    [ -f "$installation/source/compose.yaml" ] || fail "current installation has no retained compose.yaml"
+    expected_commit=$(manifest_value commit "$manifest")
+    actual_commit=$(git -C "$installation/source" rev-parse HEAD 2>/dev/null) || fail "retained source is not a Git checkout"
+    [ "$actual_commit" = "$expected_commit" ] || fail "retained source commit does not match the installation manifest"
+    MERKLE_IMAGE=$image \
+    MERKLE_INSTALLATION_ID=$install_id \
+    MERKLE_ADAPTERS=$adapters \
+    MERKLE_RUNTIME=$runtime \
+        docker compose -f "$installation/source/compose.yaml" \
+        --project-name "merkle-$(printf '%s' "$install_id" | cut -c1-48)" \
+        run --rm --no-deps merkle --help >/dev/null || fail "containerized Merkle smoke check failed"
+    printf 'Merkle installation %s is ready.\n' "$install_id"
+}
+
+uninstall_installation() {
+    [ "$#" -ge 1 ] || fail "uninstall requires an installation ID or 'current'" 2
+    selector=$1
+    if [ "$selector" = "current" ]; then
+        installation=$(current_installation)
+        install_id=$(basename "$installation")
+    else
+        install_id=$selector
+        installation="$installs_root/$install_id"
+    fi
+    validate_install_id "$install_id"
+    manifest="$installation/install.env"
+    [ -f "$manifest" ] || fail "installation '$install_id' does not exist" 2
+    image=$(manifest_value image "$manifest")
+    owner=$(docker image inspect --format '{{ index .Config.Labels "org.merkle.installation-id" }}' "$image" 2>/dev/null || true)
+    managed=$(docker image inspect --format '{{ index .Config.Labels "org.merkle.managed" }}' "$image" 2>/dev/null || true)
+    was_current=false
+    if [ -d "$data_root/current" ] && [ "$(current_installation)" = "$installation" ]; then was_current=true; fi
+    if [ "$managed" = "true" ] && [ "$owner" = "$install_id" ]; then docker image rm "$image" >/dev/null; fi
+    rm -rf "$installation"
+    if [ "$was_current" = true ]; then rm -f "$data_root/current"; fi
+    remove_cache=false
+    remove_wrapper=false
+    shift
+    while [ "$#" -gt 0 ]; do
+        case "$1" in
+            --with-cache) remove_cache=true ;;
+            --remove-wrapper) remove_wrapper=true ;;
+            *) fail "unknown uninstall option '$1'" 2 ;;
+        esac
+        shift
+    done
+    if [ "$remove_cache" = true ]; then
+        docker volume ls \
+            --filter "label=org.merkle.managed=true" \
+            --filter "label=org.merkle.installation-id=$install_id" \
+            --format '{{.Name}}' |
+            while IFS= read -r volume; do [ -z "$volume" ] || docker volume rm "$volume" >/dev/null; done
+    fi
+    if [ ! -d "$data_root/current" ]; then
+        replacement=""
+        for candidate in "$installs_root"/*/install.env; do
+            [ -f "$candidate" ] || continue
+            replacement=$(basename "$(dirname "$candidate")")
+        done
+        if [ -n "$replacement" ]; then promote_current "$replacement"; fi
+    fi
+    remaining=false
+    for candidate in "$installs_root"/*/install.env; do
+        if [ -f "$candidate" ]; then remaining=true; break; fi
+    done
+    expected_wrapper=${MERKLE_BIN_DIR:-"$HOME/.local/bin"}/merkle
+    if [ "$remove_wrapper" = true ] && [ "$remaining" = false ] && [ "$0" = "$expected_wrapper" ]; then
+        rm -f "$expected_wrapper"
+    fi
+    printf 'Uninstalled Merkle installation %s.\n' "$install_id"
+}
+
+case "${1:-}" in
+    install)
+        shift
+        if [ -d "$data_root/current" ]; then
+            installation=$(current_installation)
+            exec "$installation/source/install" "$@"
+        fi
+        command -v git >/dev/null 2>&1 || fail "Git is required to bootstrap the installer"
+        bootstrap_directory=$(mktemp -d "${TMPDIR:-/tmp}/merkle-bootstrap.XXXXXX") || fail "could not create installer bootstrap directory"
+        cleanup_bootstrap() { rm -rf "$bootstrap_directory"; }
+        trap cleanup_bootstrap EXIT HUP INT TERM
+        printf 'No Merkle installation is selected; fetching the installer from the official repository.\n' >&2
+        git clone --quiet --depth 1 https://github.com/leeozaka/merkle.git "$bootstrap_directory/source" || fail "could not fetch the official Merkle installer"
+        [ -x "$bootstrap_directory/source/install" ] || fail "the official checkout does not contain an executable installer"
+        "$bootstrap_directory/source/install" "$@"
+        exit $?
+        ;;
+    list)
+        shift
+        [ "$#" -eq 0 ] || fail "list accepts no arguments" 2
+        list_installations
+        exit 0
+        ;;
+    use)
+        shift
+        use_installation "$@"
+        exit 0
+        ;;
+    doctor)
+        shift
+        [ "$#" -eq 0 ] || fail "doctor accepts no arguments" 2
+        doctor
+        exit 0
+        ;;
+    uninstall)
+        shift
+        uninstall_installation "$@"
+        exit 0
+        ;;
+esac
+
+[ "$#" -gt 0 ] || fail "a Merkle CLI command is required" 2
+network_mode=bridge
+allowed_external_mounts=""
+while [ "$#" -gt 0 ]; do
+    case "$1" in
+        --offline)
+            network_mode=none
+            shift
+            ;;
+        --allow-external-mount)
+            [ "$#" -ge 2 ] || fail "--allow-external-mount requires an existing path" 2
+            requested_mount=$2
+            [ -e "$requested_mount" ] || fail "authorized external mount '$requested_mount' does not exist" 2
+            [ ! -L "$requested_mount" ] || fail "symbolic-link mounts are unsupported; authorize the resolved path instead" 2
+            if [ -d "$requested_mount" ]; then
+                requested_mount=$(CDPATH= cd -- "$requested_mount" && pwd -P)
+            else
+                requested_parent=$(CDPATH= cd -- "$(dirname "$requested_mount")" && pwd -P)
+                requested_mount="$requested_parent/$(basename "$requested_mount")"
+            fi
+            [ "$requested_mount" != "/" ] || fail "the filesystem root cannot be mounted" 2
+            [ "$requested_mount" != "$HOME" ] || fail "the home directory cannot be mounted" 2
+            allowed_external_mounts="${allowed_external_mounts}${allowed_external_mounts:+
+}$requested_mount"
+            shift 2
+            ;;
+        *) break ;;
+    esac
+done
+[ "$#" -gt 0 ] || fail "wrapper options require a Merkle CLI command" 2
+command -v git >/dev/null 2>&1 || fail "Git is required"
+command -v docker >/dev/null 2>&1 || fail "Docker Engine with Compose v2 is required"
+docker compose version >/dev/null 2>&1 || fail "Docker Compose v2 is unavailable"
+docker_host=$(docker context inspect --format '{{ (index .Endpoints "docker").Host }}' 2>/dev/null) || fail "the active Docker context cannot be inspected"
+case "$docker_host" in unix://*) ;; *) fail "the active Docker context is remote; select a local Docker context" ;; esac
+
+working_directory=$(pwd -P)
+repository_root=$(git -C "$working_directory" rev-parse --show-toplevel 2>/dev/null) || fail "run Merkle inside a Git working tree"
+case "$repository_root" in /mnt/[A-Za-z]/*) printf 'Merkle support for Windows-mounted WSL repositories is best effort; prefer the WSL Linux filesystem.\n' >&2 ;; esac
+git_directory=$(git -C "$repository_root" rev-parse --git-dir)
+git_common_directory=$(git -C "$repository_root" rev-parse --git-common-dir)
+case "$git_directory" in /*) ;; *) git_directory="$repository_root/$git_directory" ;; esac
+case "$git_common_directory" in /*) ;; *) git_common_directory="$repository_root/$git_common_directory" ;; esac
+
+if [ -f "$repository_root/.merkle-version" ]; then
+    installation=$(select_from_pin "$repository_root")
+else
+    installation=$(current_installation)
+fi
+manifest="$installation/install.env"
+[ -f "$manifest" ] || fail "selected installation has no manifest"
+install_id=$(manifest_value installation_id "$manifest")
+image=$(manifest_value image "$manifest")
+runtime_image=$image
+
+runtime_configuration="$repository_root/.merkle-runtime.yml"
+custom_environment=""
+custom_mounts=""
+custom_dockerfile=""
+custom_context="."
+if [ -f "$runtime_configuration" ]; then
+    configured_image=$(awk -F: '$1 == "image" { sub(/^[^:]*:[[:space:]]*/, ""); print; exit }' "$runtime_configuration")
+    custom_dockerfile=$(awk -F: '$1 == "dockerfile" { sub(/^[^:]*:[[:space:]]*/, ""); print; exit }' "$runtime_configuration")
+    configured_context=$(awk -F: '$1 == "context" { sub(/^[^:]*:[[:space:]]*/, ""); print; exit }' "$runtime_configuration")
+    [ -z "$configured_context" ] || custom_context=$configured_context
+    custom_environment=$(awk '
+        /^[^[:space:]]/ { section = ($0 == "environment:") }
+        section && /^[[:space:]]*-[[:space:]]*/ {
+            sub(/^[[:space:]]*-[[:space:]]*/, ""); print
+        }
+    ' "$runtime_configuration")
+    custom_mounts=$(awk '
+        /^[^[:space:]]/ { section = ($0 == "mounts:") }
+        section && /^[[:space:]]*-[[:space:]]*/ {
+            sub(/^[[:space:]]*-[[:space:]]*/, ""); print
+        }
+    ' "$runtime_configuration")
+    [ -z "$configured_image" ] || [ -z "$custom_dockerfile" ] || fail ".merkle-runtime.yml cannot set both image and dockerfile"
+    if [ -n "$configured_image" ]; then runtime_image=$configured_image; fi
+fi
+
+actual_image_id=$(docker image inspect --format '{{.Id}}' "$image" 2>/dev/null) || fail "installed image '$image' is unavailable; run merkle doctor"
+[ "$actual_image_id" = "$(manifest_value image_id "$manifest")" ] || fail "installed image ID does not match the selected installation; run merkle doctor"
+image_owner=$(docker image inspect --format '{{ index .Config.Labels "org.merkle.installation-id" }}' "$image" 2>/dev/null) || fail "installed image labels are unavailable"
+[ "$image_owner" = "$install_id" ] || fail "installed image is not owned by installation '$install_id'"
+image_managed=$(docker image inspect --format '{{ index .Config.Labels "org.merkle.managed" }}' "$image" 2>/dev/null) || fail "installed image labels are unavailable"
+[ "$image_managed" = "true" ] || fail "installed image is missing the Merkle ownership label"
+image_adapters=$(docker image inspect --format '{{ index .Config.Labels "org.merkle.adapters" }}' "$image" 2>/dev/null) || fail "installed adapter labels are unavailable"
+[ "$image_adapters" = "$(manifest_value adapters "$manifest")" ] || fail "installed image adapter set does not match the selected installation"
+
+lock_root=${MERKLE_LOCK_ROOT:-"${TMPDIR:-/tmp}/merkle-locks"}
+mkdir -p "$lock_root"
+lock_key=$(printf '%s' "$repository_root" | cksum | awk '{print $1}')
+lock_directory="$lock_root/$lock_key"
+timeout=${MERKLE_LOCK_TIMEOUT_SECONDS:-300}
+started=$(date +%s)
+announced=0
+while ! mkdir "$lock_directory" 2>/dev/null; do
+    if [ "$announced" -eq 0 ]; then
+        printf 'Waiting for another Merkle run in %s.\n' "$repository_root" >&2
+        announced=1
+    fi
+    now=$(date +%s)
+    [ $((now - started)) -lt "$timeout" ] || fail "timed out waiting for repository lock $lock_directory"
+    sleep 1
+done
+printf '%s\n' "$$" > "$lock_directory/pid"
+release_lock() { rm -rf "$lock_directory"; }
+trap release_lock EXIT
+trap 'exit 130' HUP INT TERM
+
+if [ -n "$custom_dockerfile" ]; then
+    case "$custom_dockerfile" in /*) fail "custom Dockerfile must be repository-relative" ;; esac
+    case "$custom_context" in /*) fail "custom context must be repository-relative" ;; esac
+    dockerfile_parent=$(CDPATH= cd -- "$repository_root/$(dirname "$custom_dockerfile")" && pwd -P) || fail "custom Dockerfile parent does not exist"
+    case "$dockerfile_parent" in "$repository_root"|"$repository_root"/*) ;; *) fail "custom Dockerfile escapes the repository" ;; esac
+    dockerfile_path="$dockerfile_parent/$(basename "$custom_dockerfile")"
+    [ -f "$dockerfile_path" ] || fail "custom Dockerfile '$custom_dockerfile' does not exist"
+    [ ! -L "$dockerfile_path" ] || fail "custom Dockerfile '$custom_dockerfile' is a symbolic link; use a repository-contained regular file"
+    [ -d "$repository_root/$custom_context" ] || fail "custom context '$custom_context' does not exist"
+    context_path=$(CDPATH= cd -- "$repository_root/$custom_context" && pwd -P)
+    case "$context_path" in "$repository_root"|"$repository_root"/*) ;; *) fail "custom context escapes the repository" ;; esac
+    custom_key=$(cksum "$runtime_configuration" | awk '{print $1}')
+    runtime_image="merkle-custom:$install_id-$custom_key"
+    if ! docker image inspect "$runtime_image" >/dev/null 2>&1; then
+        printf 'Building repository-specific Merkle runtime %s.\n' "$runtime_image" >&2
+        docker build \
+            --build-arg "MERKLE_BASE_IMAGE=$image" \
+            --label org.merkle.managed=true \
+            --label "org.merkle.installation-id=$install_id" \
+            --tag "$runtime_image" \
+            --file "$dockerfile_path" \
+            "$context_path"
+    fi
+fi
+docker image inspect "$runtime_image" >/dev/null 2>&1 || fail "runtime image '$runtime_image' is unavailable"
+
+project_name="merkle-$(printf '%s' "$install_id" | cut -c1-48)"
+install_key=$(printf '%s' "$install_id" | cksum | awk '{print $1}')
+uid=$(id -u)
+gid=$(id -g)
+compose_file="$installation/source/compose.yaml"
+[ -f "$compose_file" ] || fail "selected installation has no compose.yaml"
+
+override_file="$lock_directory/compose.override.yaml"
+cat > "$override_file" <<'EOF'
+services:
+  merkle:
+    image: ${MERKLE_IMAGE}
+EOF
+if [ -n "$custom_environment" ]; then
+    printf '    environment:\n' >> "$override_file"
+    printf '%s\n' "$custom_environment" | while IFS= read -r name; do
+        case "$name" in
+            ''|[0-9]*|*[!A-Za-z0-9_]*) fail "invalid environment variable name '$name' in .merkle-runtime.yml" ;;
+        esac
+        printf '      - %s\n' "$name" >> "$override_file"
+    done
+fi
+external_git_mounts=""
+case "$git_directory:$git_common_directory" in
+    "$repository_root"/*:"$repository_root"/*) ;;
+    *) external_git_mounts="$git_directory
+$git_common_directory" ;;
+esac
+if [ -n "$custom_mounts" ] || [ -n "$external_git_mounts" ]; then
+    printf '    volumes:\n' >> "$override_file"
+fi
+if [ -n "$custom_mounts" ]; then
+    printf '%s\n' "$custom_mounts" | while IFS= read -r mount; do
+        case "$mount" in /*) mount_path=$mount ;; *) mount_path="$repository_root/$mount" ;; esac
+        [ -e "$mount_path" ] || fail "custom mount '$mount' does not exist"
+        [ ! -L "$mount_path" ] || fail "custom mount '$mount' is a symbolic link; mount its resolved target explicitly"
+        if [ -d "$mount_path" ]; then
+            mount_path=$(CDPATH= cd -- "$mount_path" && pwd -P)
+        else
+            mount_parent=$(CDPATH= cd -- "$(dirname "$mount_path")" && pwd -P)
+            mount_path="$mount_parent/$(basename "$mount_path")"
+        fi
+        case "$mount_path" in
+            "$repository_root"|"$repository_root"/*) ;;
+            *)
+                printf '%s\n' "$allowed_external_mounts" | grep -F -x -e "$mount_path" >/dev/null 2>&1 ||
+                    fail "custom mount '$mount' is external; authorize its exact path with --allow-external-mount"
+                ;;
+        esac
+        quoted_mount=$(printf '%s' "$mount_path" | sed "s/'/''/g")
+        printf "      - type: bind\n        source: '%s'\n        target: '%s'\n" "$quoted_mount" "$quoted_mount" >> "$override_file"
+    done
+fi
+if [ -n "$external_git_mounts" ]; then
+    printf '%s\n' "$external_git_mounts" | while IFS= read -r mount_path; do
+        quoted_mount=$(printf '%s' "$mount_path" | sed "s/'/''/g")
+        printf "      - type: bind\n        source: '%s'\n        target: '%s'\n        read_only: true\n" "$quoted_mount" "$quoted_mount" >> "$override_file"
+    done
+fi
+
+run_compose() {
+    MERKLE_IMAGE=$runtime_image \
+    MERKLE_INSTALLATION_ID=$install_id \
+    MERKLE_REPO_ROOT=$repository_root \
+    MERKLE_WORKDIR=$working_directory \
+    MERKLE_UID=$uid \
+    MERKLE_GID=$gid \
+    MERKLE_NUGET_VOLUME="merkle-${install_key}-${lock_key}-nuget" \
+    MERKLE_MAVEN_VOLUME="merkle-${install_key}-${lock_key}-maven" \
+    MERKLE_GRADLE_VOLUME="merkle-${install_key}-${lock_key}-gradle" \
+    MERKLE_GO_MOD_VOLUME="merkle-${install_key}-${lock_key}-go-mod" \
+    MERKLE_GO_BUILD_VOLUME="merkle-${install_key}-${lock_key}-go-build" \
+    MERKLE_PIP_VOLUME="merkle-${install_key}-${lock_key}-pip" \
+    MERKLE_NETWORK_MODE=$network_mode \
+        docker compose -f "$compose_file" -f "$override_file" --project-name "$project_name" \
+        run --rm --no-deps --user "$uid:$gid" --workdir "$working_directory" \
+        --volume "$repository_root:$repository_root" "$@"
+}
+
+run_compose merkle "$@"

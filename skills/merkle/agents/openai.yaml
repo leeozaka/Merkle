@@ -1,0 +1,4 @@
+interface:
+  display_name: "Merkle"
+  short_description: "Use Merkle for faster development test loops"
+  default_prompt: "Use $merkle to install or run Merkle during development, then run the repository full suite."

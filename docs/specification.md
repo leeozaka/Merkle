@@ -144,6 +144,30 @@ The four acceptance cases that selected this contract are:
 | `java` | strict | Detected during preflight | Exit 3; build no host output |
 | `java` | best effort | Java is skipped and no adapter remains | Exit 3; build no host output |
 
+## 6c. Local container installation requirements
+
+These requirements govern the optional local installation used by development agents. They do not change adapter capabilities or make Merkle a full-suite replacement.
+
+- **L-001:** `./install` must build only from `https://github.com/leeozaka/merkle.git`. An omitted ref selects the highest stable `vMAJOR.MINOR.PATCH` tag and falls back to the default branch only when no stable tag exists. The resolved commit must be recorded.
+- **L-002:** The supported hosts are macOS, Linux, and WSL2 on its Linux filesystem, using the local Docker Engine or Docker Desktop through Compose v2. Native Windows, remote Docker contexts, alternate container engines, and Windows-mounted WSL repositories are outside the supported contract.
+- **L-003:** Installation and runtime execution must use one parameterized Compose service. The host wrapper must hide Compose from callers and use an ephemeral container for each Merkle command.
+- **L-004:** The default installation must request `dotnet,golang,python,java`. `--adapters` may request any nonempty subset; aliases, ordering, and duplicates must normalize before the adapter set becomes part of installation identity.
+- **L-005:** A selected adapter must bring the compiler, SDK, runtime, and common build tools required by that adapter's documented scope. This does not provision target-specific databases, browsers, services, credentials, or native libraries.
+- **L-006:** An installation variant is immutable and identified by resolved commit, Docker architecture, and normalized adapter set. Variants may coexist. A `current` selection provides the user-wide default, and `.merkle-version` may pin an exact variant for one repository.
+- **L-007:** Installation must build and smoke-test before atomic promotion. Failure must preserve the previous `current` variant. Repeating an unchanged unqualified request must reuse a healthy variant; a newer stable tag must install beside the old variant and become `current`.
+- **L-008:** Versioned source and manifests must live beneath `${XDG_DATA_HOME:-~/.local/share}/merkle`; disposable build data belongs beneath `${XDG_CACHE_HOME:-~/.cache}/merkle`. The wrapper belongs in `~/.local/bin` unless explicitly overridden.
+- **L-009:** The installation manifest must record repository URL, requested and resolved ref, resolved commit, architecture, runtime identifier, normalized adapters, image name and ID, and installation ID. It must not record secret values.
+- **L-010:** Runtime execution must mount only the discovered Git working tree read-write plus exact external Git administration paths required by a linked worktree. Host paths must remain identical inside the container. Bare repositories are unsupported.
+- **L-011:** Linux and WSL execution must use the invoking UID and GID. Git trust may add only the exact mounted repository to `safe.directory`; wildcard trust is forbidden.
+- **L-012:** Runtime network access is enabled by default and may be disabled explicitly. Host credentials, environment variables, Docker sockets, and external paths must not be forwarded automatically.
+- **L-013:** `.merkle-runtime.yml` may select a custom image or repository-relative Dockerfile and context, name environment variables to forward, and add repository-contained mounts. External or broad host mounts require separate explicit authorization.
+- **L-014:** Docker-owned caches may persist target dependency downloads. Images, volumes, and containers created by Merkle must carry ownership and installation labels; cleanup may remove only exact matching resources.
+- **L-015:** Merkle operations must serialize per repository with a visible, bounded wait. Different repositories may run concurrently. A live lock must never be broken automatically.
+- **L-016:** The host wrapper must expose `install`, `doctor`, `list`, `use`, and `uninstall` management commands while delegating `plan`, `observe`, `run`, `state`, and `history` to the selected containerized CLI.
+- **L-017:** The portable agent skill must announce image builds and cold-start observation, run one deep invocation per configured .NET or Go language, disclose every fallback, and run the repository's canonical full suite before completing a development task.
+- **L-018:** Python and Java may be bundled for semantic planning and future capability growth, but the skill must not claim deep selected-test execution for an adapter that does not advertise it.
+- **L-019:** Public Merkle images, automatic editor hooks, CI release automation, arbitrary fork installation, and automatic normal-use version checks are outside this local-only contract.
+
 ## 7. Historical and statistical requirements
 
 - **H-001:** Only terminal runs may contribute historical evidence.

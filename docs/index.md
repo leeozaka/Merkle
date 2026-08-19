@@ -1,6 +1,6 @@
 # Merkle documentation
 
-Merkle has an implementation of roadmap phases 0–5. This directory records the product constraints, the .NET 10/Native AOT topology, and the first-party Go adapter.
+Merkle has an implementation of roadmap phases 0–5 and a local-agent runtime in phase 6. This directory records the product constraints, the .NET 10/Native AOT topology, and the first-party adapters.
 
 ## Start here
 
@@ -23,6 +23,7 @@ Merkle has an implementation of roadmap phases 0–5. This directory records the
 - [Adapter authoring](adapter-authoring.md) defines the capability-negotiated contributor contract.
 - [Go adapter](go-adapter.md) documents the first-party worker, host operations, supported repository scope, and blind spots.
 - [Specification section 6b](specification.md#6b-merkle-source-build-requirements) defines selectable adapter source builds, policies, reports, manifests, and exit codes.
+- [Specification section 6c](specification.md#6c-local-container-installation-requirements) defines the local Docker runtime, immutable installations, wrapper, and agent workflow.
 - [CI and remote-state operations](operations.md) defines trusted-runner, cache, remote API, and release rules.
 - [Language options](language-options.md) compares likely core implementation languages and toolchains.
 - [Conversation decisions](conversation-decisions.md) preserves the evolution of the idea and the constraints agreed during discovery.

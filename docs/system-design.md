@@ -845,6 +845,16 @@ Exit: reports are calibrated, explainable, and can support user-configured execu
 
 Exit: contributors can add adapters without linking to core internals, and CI usage is repeatable.
 
+### Phase 6: Local agent runtime
+
+- Resolve official stable refs and retain immutable local installation variants.
+- Build one selected-toolchain Linux image through a parameterized Compose service.
+- Expose the image through a user-wide wrapper with linked-worktree mounts, repository locks, and Docker-owned caches.
+- Ship one portable agent skill for installation, cold-start observation, iterative selected tests, and the final repository-native full suite.
+- Keep runtime secrets, external mounts, custom images, and repository mutation explicit.
+
+Exit: a user on macOS, Linux, or WSL2 can ask an agent to install Merkle locally and use it from an unrelated repository without host language toolchains.
+
 ## 22. Risks and mitigations
 
 | Risk | Consequence | Mitigation |
@@ -895,6 +905,9 @@ The following ADRs should be written as individual records. Accepted items refle
 | ADR-0014 | Consider Go, but promise no second first-party adapter yet. | Deferred | Demand and maintainer capacity should justify another deep implementation. |
 | ADR-0015 | Use C# on .NET 10 with Native AOT as the core toolchain. | Accepted | Keeps the first adapter in its native ecosystem and makes distribution constraints visible from the first executable. |
 | ADR-0016 | Use a startup hook for dependency-free coarse .NET observation. | Accepted | Ships one managed companion observer while keeping target projects untouched and blind spots explicit. |
+| ADR-0017 | Ship Go as the first additional deep adapter. | Accepted | Exercises the process boundary with a native ecosystem and file-level observations. |
+| ADR-0018 | Build selected adapters through a dedicated helper. | Accepted | Keeps toolchain selection, strict failure, smoke checks, and atomic packaging behind one source-build interface. |
+| ADR-0019 | Run local agent installations through a containerized Merkle runtime. | Accepted | Avoids host language-toolchain provisioning while keeping images local and the final full suite authoritative. |
 
 ## 25. Recommended decision sequence
 

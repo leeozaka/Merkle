@@ -1,3 +1,60 @@
+## Install the local Docker runtime
+
+The agent-friendly installation needs Git, a local Docker Engine with Compose v2, and a POSIX shell. It does not need host Java, Python, Go, or .NET toolchains.
+
+From an official checkout:
+
+```bash
+./install
+```
+
+The installer resolves the newest stable `vMAJOR.MINOR.PATCH` tag, or the default branch when no stable tag exists. It builds all four adapters by default. Select a smaller immutable variant when needed:
+
+```bash
+./install --ref v1.2.3 --adapters dotnet,golang
+```
+
+Installation retains versioned source and metadata beneath `${XDG_DATA_HOME:-~/.local/share}/merkle`, builds a local Docker image, and installs a wrapper at `~/.local/bin/merkle`. The previous installation remains selected until clone, build, image inspection, and smoke checks all pass.
+
+Inspect and select local variants:
+
+```bash
+merkle doctor
+merkle list
+merkle use <installation-id>
+merkle use <installation-id> --project
+merkle uninstall <installation-id|current>
+```
+
+`merkle use <installation-id> --project` writes an exact ref, commit, architecture, adapter set, and installation ID to `.merkle-version` at the Git root.
+
+The wrapper finds the current Git working tree, preserves linked-worktree metadata paths, maps the host UID/GID, and runs an ephemeral Compose container. Dependency caches live in labelled Docker volumes. Network access is enabled unless `--offline` appears before the Merkle command:
+
+```bash
+merkle --offline plan --base main --head WORKTREE --languages dotnet:deep
+```
+
+The wrapper forwards no credentials or environment variables by default. Add `.merkle-runtime.yml` when a repository needs a custom image, repository-relative Dockerfile, named host variables, or repository-contained mounts:
+
+```yaml
+dockerfile: .merkle/Dockerfile
+context: .
+environment:
+  - PRIVATE_FEED_TOKEN
+mounts:
+  - .tool-cache
+```
+
+A custom Dockerfile accepts `MERKLE_BASE_IMAGE` and derives from it. `image` may replace `dockerfile` and `context` when the required image already exists locally. Absolute mounts and paths escaping the Git root are rejected.
+
+Install the portable agent instructions globally with a compatible Agent Skills installer, or copy [`skills/merkle`](skills/merkle) into the agent's global skill directory:
+
+```bash
+npx skills add leeozaka/merkle --skill merkle --global --yes
+```
+
+Omit `--global` for project scope. Node is needed only for this optional distribution command. Skill installation and Merkle runtime installation are separate.
+
 ## Build for local development
 
 Install the .NET SDK selected by `global.json`. It is required for every source build. Go, Python, and a Java JDK with Maven are needed only when you select their adapters.

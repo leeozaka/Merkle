@@ -1,0 +1,338 @@
+#!/bin/sh
+set -eu
+
+repository_url="https://github.com/leeozaka/merkle.git"
+requested_ref=""
+requested_adapters="all"
+
+show_help() {
+    cat <<'EOF'
+Usage: ./install [options]
+
+Build and install the official Merkle repository as a local Docker-backed tool.
+
+Options:
+  --ref <tag|branch|commit>  Install an explicit official repository ref.
+  --adapters <list|all>      Bundle a comma-separated adapter set (default: all).
+  --help                     Show this help.
+EOF
+}
+
+fail() {
+    printf 'merkle install: %s\n' "$1" >&2
+    exit "${2:-1}"
+}
+
+manifest_value() {
+    key=$1
+    manifest=$2
+    awk -F= -v wanted="$key" '$1 == wanted { sub(/^[^=]*=/, ""); print; exit }' "$manifest"
+}
+
+installation_is_healthy() {
+    destination=$1
+    image=$2
+    install_id=$3
+    expected_commit=$4
+    expected_adapters=$5
+    expected_architecture=$6
+    manifest="$destination/install.env"
+    [ -f "$manifest" ] || return 1
+    [ "$(manifest_value repository "$manifest")" = "$repository_url" ] || return 1
+    [ "$(manifest_value commit "$manifest")" = "$expected_commit" ] || return 1
+    [ "$(manifest_value architecture "$manifest")" = "$expected_architecture" ] || return 1
+    [ "$(manifest_value adapters "$manifest")" = "$expected_adapters" ] || return 1
+    [ "$(manifest_value image "$manifest")" = "$image" ] || return 1
+    [ "$(manifest_value installation_id "$manifest")" = "$install_id" ] || return 1
+    [ -f "$destination/source/compose.yaml" ] || return 1
+    [ -x "$destination/source/scripts/merkle" ] || return 1
+    source_commit=$(git -C "$destination/source" rev-parse HEAD 2>/dev/null) || return 1
+    [ "$source_commit" = "$expected_commit" ] || return 1
+    expected_image_id=$(manifest_value image_id "$manifest")
+    actual_image_id=$(docker image inspect --format '{{.Id}}' "$image" 2>/dev/null) || return 1
+    [ "$actual_image_id" = "$expected_image_id" ] || return 1
+    owner=$(MERKLE_INSTALLATION_ID=$install_id docker image inspect --format '{{ index .Config.Labels "org.merkle.installation-id" }}' "$image" 2>/dev/null) || return 1
+    managed=$(docker image inspect --format '{{ index .Config.Labels "org.merkle.managed" }}' "$image" 2>/dev/null) || return 1
+    image_adapters=$(MERKLE_ADAPTERS=$expected_adapters docker image inspect --format '{{ index .Config.Labels "org.merkle.adapters" }}' "$image" 2>/dev/null) || return 1
+    [ "$owner" = "$install_id" ] && [ "$managed" = "true" ] && [ "$image_adapters" = "$expected_adapters" ] || return 1
+    project_name="merkle-$(printf '%s' "$install_id" | cut -c1-48)"
+    MERKLE_IMAGE=$image \
+    MERKLE_INSTALLATION_ID=$install_id \
+    MERKLE_ADAPTERS=$expected_adapters \
+    MERKLE_RUNTIME=$runtime \
+        docker compose -f "$destination/source/compose.yaml" --project-name "$project_name" run --rm --no-deps merkle --help >/dev/null 2>&1
+}
+
+normalize_adapters() {
+    value=$1
+    [ -n "$value" ] || fail "adapter selection cannot be empty" 2
+
+    dotnet=0
+    golang=0
+    python=0
+    java=0
+    old_ifs=$IFS
+    IFS=,
+    set -- $value
+    IFS=$old_ifs
+    for adapter in "$@"; do
+        case "$adapter" in
+            all)
+                [ "$value" = "all" ] || fail "'all' cannot be combined with named adapters" 2
+                dotnet=1; golang=1; python=1; java=1
+                ;;
+            dotnet) dotnet=1 ;;
+            go|golang) golang=1 ;;
+            python|python3) python=1 ;;
+            java) java=1 ;;
+            *) fail "unknown adapter '$adapter'" 2 ;;
+        esac
+    done
+
+    normalized=""
+    for adapter in dotnet golang python java; do
+        eval "enabled=\$$adapter"
+        if [ "$enabled" -eq 1 ]; then
+            if [ -n "$normalized" ]; then normalized="$normalized,$adapter"; else normalized=$adapter; fi
+        fi
+    done
+    [ -n "$normalized" ] || fail "adapter selection cannot be empty" 2
+    printf '%s\n' "$normalized"
+}
+
+latest_stable_record() {
+    git ls-remote --tags "$repository_url" 'refs/tags/v*' |
+        awk '
+            $2 ~ /^refs\/tags\/v[0-9]+\.[0-9]+\.[0-9]+(\^\{\})?$/ {
+                tag = $2
+                sub(/^refs\/tags\//, "", tag)
+                peeled = sub(/\^\{\}$/, "", tag)
+                count = split(substr(tag, 2), part, ".")
+                if (count != 3) next
+                major = part[1] + 0
+                minor = part[2] + 0
+                patch = part[3] + 0
+                if (!found || major > best_major ||
+                    (major == best_major && minor > best_minor) ||
+                    (major == best_major && minor == best_minor && patch > best_patch)) {
+                    found = 1
+                    best = tag
+                    best_major = major
+                    best_minor = minor
+                    best_patch = patch
+                    best_hash = $1
+                    best_peeled = peeled
+                } else if (tag == best && peeled && !best_peeled) {
+                    best_hash = $1
+                    best_peeled = 1
+                }
+            }
+            END { if (found) print best "|" best_hash }
+        '
+}
+
+default_branch_ref() {
+    git ls-remote --symref "$repository_url" HEAD |
+        awk '$1 == "ref:" && $3 == "HEAD" { sub(/^refs\/heads\//, "", $2); print $2; exit }'
+}
+
+promote_current() {
+    install_id=$1
+    temporary_link="$data_root/.current.$$"
+    rm -f "$temporary_link"
+    ln -s "installs/$install_id" "$temporary_link"
+    mv -f "$temporary_link" "$data_root/current"
+}
+
+install_wrapper() {
+    source_root=$1
+    bin_directory=${MERKLE_BIN_DIR:-"$HOME/.local/bin"}
+    mkdir -p "$bin_directory"
+    cp "$source_root/scripts/merkle" "$bin_directory/merkle"
+    chmod 755 "$bin_directory/merkle"
+
+    case ":${PATH:-}:" in
+        *":$bin_directory:"*) return ;;
+    esac
+
+    shell_name=$(basename "${SHELL:-}")
+    case "$shell_name" in
+        zsh) shell_file="$HOME/.zshrc" ;;
+        bash) shell_file="$HOME/.bashrc" ;;
+        *)
+            printf 'Add %s to PATH before invoking merkle.\n' "$bin_directory"
+            return
+            ;;
+    esac
+    path_line="export PATH=\"$bin_directory:\$PATH\""
+    if [ ! -f "$shell_file" ] || ! grep -F "$path_line" "$shell_file" >/dev/null 2>&1; then
+        printf '\n# Merkle local command\n%s\n' "$path_line" >> "$shell_file"
+        printf 'Updated %s with the Merkle command path.\n' "$shell_file"
+    fi
+}
+
+while [ "$#" -gt 0 ]; do
+    case "$1" in
+        --help)
+            show_help
+            exit 0
+            ;;
+        --ref)
+            [ "$#" -ge 2 ] || fail "--ref requires a value" 2
+            requested_ref=$2
+            shift 2
+            ;;
+        --adapters)
+            [ "$#" -ge 2 ] || fail "--adapters requires a value" 2
+            requested_adapters=$2
+            shift 2
+            ;;
+        *) fail "unknown option '$1'" 2 ;;
+    esac
+done
+
+command -v git >/dev/null 2>&1 || fail "Git is required"
+command -v docker >/dev/null 2>&1 || fail "Docker Engine with Compose v2 is required"
+docker compose version >/dev/null 2>&1 || fail "Docker Compose v2 is required; install Docker Desktop or the Compose plugin"
+docker_host=$(docker context inspect --format '{{ (index .Endpoints "docker").Host }}' 2>/dev/null) || fail "the active Docker context cannot be inspected"
+case "$docker_host" in unix://*) ;; *) fail "the active Docker context is remote; select a local Docker Engine or Docker Desktop context" ;; esac
+
+adapters=$(normalize_adapters "$requested_adapters")
+resolved_ref=$requested_ref
+remote_commit=""
+development_build=false
+if [ -z "$resolved_ref" ]; then
+    stable_record=$(latest_stable_record)
+    if [ -n "$stable_record" ]; then
+        resolved_ref=${stable_record%%|*}
+        remote_commit=${stable_record#*|}
+    fi
+    if [ -z "$resolved_ref" ]; then
+        resolved_ref=$(default_branch_ref)
+        [ -n "$resolved_ref" ] || fail "could not resolve a stable tag or the default branch"
+        development_build=true
+        printf 'No stable Merkle tag is available; installing default branch %s.\n' "$resolved_ref"
+    fi
+fi
+
+architecture=$(docker info --format '{{.Architecture}}' 2>/dev/null) || fail "the local Docker engine is unavailable"
+case "$architecture" in
+    amd64|x86_64) architecture=amd64; runtime=linux-x64 ;;
+    arm64|aarch64) architecture=arm64; runtime=linux-arm64 ;;
+    *) fail "unsupported Docker architecture '$architecture'; use native amd64 or arm64" ;;
+esac
+
+data_root=${MERKLE_DATA_HOME:-"${XDG_DATA_HOME:-$HOME/.local/share}/merkle"}
+cache_root=${MERKLE_CACHE_HOME:-"${XDG_CACHE_HOME:-$HOME/.cache}/merkle"}
+mkdir -p "$data_root/installs" "$cache_root"
+
+if [ -n "$remote_commit" ]; then
+    case "$remote_commit" in *[!0-9a-f]*|'') fail "stable tag did not resolve to a hexadecimal object" ;; esac
+    adapter_slug=$(printf '%s' "$adapters" | tr ',' '-')
+    install_id="$remote_commit-$architecture-$adapter_slug"
+    destination="$data_root/installs/$install_id"
+    image="merkle-local:$install_id"
+    if installation_is_healthy "$destination" "$image" "$install_id" "$remote_commit" "$adapters" "$architecture"; then
+        install_wrapper "$destination/source"
+        promote_current "$install_id"
+        printf 'Merkle %s is already current; no newer stable version is available.\n' "$resolved_ref"
+        exit 0
+    fi
+    [ ! -e "$destination" ] || fail "existing installation '$install_id' failed integrity checks; inspect it with merkle doctor or uninstall it"
+fi
+
+staging="$data_root/.staging.$$"
+build_staging="$cache_root/build.$$"
+rm -rf "$staging" "$build_staging"
+mkdir -p "$build_staging"
+cleanup() {
+    status=$?
+    if [ "$status" -ne 0 ] && { [ -d "$build_staging" ] || [ -d "$staging" ]; }; then
+        mkdir -p "$data_root/failures"
+        failure_directory="$data_root/failures/$(date +%Y%m%d%H%M%S)-$$"
+        mkdir -p "$failure_directory"
+        if [ -d "$build_staging" ]; then mv "$build_staging" "$failure_directory/build"; fi
+        if [ -d "$staging" ]; then mv "$staging" "$failure_directory/promotion"; fi
+        printf 'merkle install: retained failure diagnostics at %s\n' "$failure_directory" >&2
+    else
+        rm -rf "$staging" "$build_staging"
+    fi
+    return "$status"
+}
+trap cleanup EXIT HUP INT TERM
+
+source_root="$build_staging/source"
+git clone --quiet --no-checkout "$repository_url" "$source_root"
+git -C "$source_root" fetch --quiet --depth 1 origin "$resolved_ref"
+git -C "$source_root" checkout --quiet --detach FETCH_HEAD
+commit=$(git -C "$source_root" rev-parse HEAD)
+case "$commit" in
+    *[!0-9a-f]*|'') fail "resolved ref did not produce a lowercase hexadecimal commit" ;;
+esac
+[ -z "$remote_commit" ] || [ "$commit" = "$remote_commit" ] || fail "checked-out commit does not match the resolved stable tag"
+
+adapter_slug=$(printf '%s' "$adapters" | tr ',' '-')
+install_id="$commit-$architecture-$adapter_slug"
+destination="$data_root/installs/$install_id"
+image="merkle-local:$install_id"
+
+if installation_is_healthy "$destination" "$image" "$install_id" "$commit" "$adapters" "$architecture"; then
+    install_wrapper "$destination/source"
+    promote_current "$install_id"
+    printf 'Merkle %s is already installed (%s).\n' "$resolved_ref" "$install_id"
+    exit 0
+fi
+[ ! -e "$destination" ] || fail "existing installation '$install_id' failed integrity checks; inspect it with merkle doctor or uninstall it"
+
+[ -f "$source_root/compose.yaml" ] || fail "resolved source does not contain compose.yaml"
+[ -x "$source_root/scripts/merkle" ] || fail "resolved source does not contain an executable scripts/merkle wrapper"
+
+project_name="merkle-$(printf '%s' "$install_id" | cut -c1-48)"
+MERKLE_IMAGE=$image \
+MERKLE_INSTALLATION_ID=$install_id \
+MERKLE_ADAPTERS=$adapters \
+MERKLE_RUNTIME=$runtime \
+    docker compose -f "$source_root/compose.yaml" --project-name "$project_name" build merkle
+
+image_id=$(docker image inspect --format '{{.Id}}' "$image") || fail "built image '$image' is unavailable"
+image_owner=$(MERKLE_INSTALLATION_ID=$install_id docker image inspect --format '{{ index .Config.Labels "org.merkle.installation-id" }}' "$image") || fail "built image ownership label is unavailable"
+[ "$image_owner" = "$install_id" ] || fail "built image ownership label does not match the installation"
+image_managed=$(docker image inspect --format '{{ index .Config.Labels "org.merkle.managed" }}' "$image") || fail "built image ownership label is unavailable"
+[ "$image_managed" = "true" ] || fail "built image is missing the Merkle ownership label"
+image_adapters=$(MERKLE_ADAPTERS=$adapters docker image inspect --format '{{ index .Config.Labels "org.merkle.adapters" }}' "$image") || fail "built image adapter label is unavailable"
+[ "$image_adapters" = "$adapters" ] || fail "built image adapter label does not match the requested set"
+MERKLE_IMAGE=$image \
+MERKLE_INSTALLATION_ID=$install_id \
+MERKLE_ADAPTERS=$adapters \
+MERKLE_RUNTIME=$runtime \
+    docker compose -f "$source_root/compose.yaml" --project-name "$project_name" run --rm --no-deps merkle --help >/dev/null
+
+mkdir -p "$staging"
+mv "$source_root" "$staging/source"
+cat > "$staging/install.env" <<EOF
+schema=1
+repository=$repository_url
+requested_ref=${requested_ref:-latest-stable}
+resolved_ref=$resolved_ref
+development_build=$development_build
+commit=$commit
+architecture=$architecture
+runtime=$runtime
+adapters=$adapters
+image=$image
+image_id=$image_id
+installation_id=$install_id
+EOF
+
+if [ -e "$destination" ]; then
+    fail "installation destination already exists but is incomplete: $destination"
+fi
+mv "$staging" "$destination"
+rm -rf "$build_staging"
+trap - EXIT HUP INT TERM
+install_wrapper "$destination/source"
+promote_current "$install_id"
+
+printf 'Installed Merkle %s with adapters %s.\n' "$resolved_ref" "$adapters"
+printf 'Installation: %s\n' "$install_id"
+printf 'Image: %s (%s)\n' "$image" "$image_id"

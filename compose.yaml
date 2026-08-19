@@ -1,0 +1,73 @@
+services:
+  merkle:
+    image: ${MERKLE_IMAGE:-merkle-local:development}
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        MERKLE_ADAPTERS: ${MERKLE_ADAPTERS:-all}
+        MERKLE_RUNTIME: ${MERKLE_RUNTIME:-linux-x64}
+        MERKLE_INSTALLATION_ID: ${MERKLE_INSTALLATION_ID:-development}
+    init: true
+    user: "${MERKLE_UID:-1000}:${MERKLE_GID:-1000}"
+    working_dir: ${MERKLE_WORKDIR:-/workspace}
+    network_mode: ${MERKLE_NETWORK_MODE:-bridge}
+    environment:
+      HOME: /tmp/merkle-home
+      MERKLE_REPO_ROOT: ${MERKLE_REPO_ROOT:-/workspace}
+      DOTNET_CLI_HOME: /var/cache/merkle/dotnet
+      DOTNET_SKIP_FIRST_TIME_EXPERIENCE: "1"
+      NUGET_PACKAGES: /var/cache/merkle/nuget
+      MAVEN_CONFIG: /var/cache/merkle/maven
+      GRADLE_USER_HOME: /var/cache/merkle/gradle
+      GOPATH: /var/cache/merkle/go
+      GOMODCACHE: /var/cache/merkle/go-mod
+      GOCACHE: /var/cache/merkle/go-build
+      PIP_CACHE_DIR: /var/cache/merkle/pip
+    tmpfs:
+      - /tmp:mode=1777
+    volumes:
+      - type: volume
+        source: nuget-cache
+        target: /var/cache/merkle/nuget
+      - type: volume
+        source: maven-cache
+        target: /var/cache/merkle/maven
+      - type: volume
+        source: gradle-cache
+        target: /var/cache/merkle/gradle
+      - type: volume
+        source: go-mod-cache
+        target: /var/cache/merkle/go-mod
+      - type: volume
+        source: go-build-cache
+        target: /var/cache/merkle/go-build
+      - type: volume
+        source: pip-cache
+        target: /var/cache/merkle/pip
+    labels:
+      org.merkle.managed: "true"
+      org.merkle.installation-id: ${MERKLE_INSTALLATION_ID:-development}
+
+volumes:
+  nuget-cache:
+    name: ${MERKLE_NUGET_VOLUME:-merkle-development-nuget}
+    labels: &merkle-cache-labels
+      org.merkle.managed: "true"
+      org.merkle.installation-id: ${MERKLE_INSTALLATION_ID:-development}
+  maven-cache:
+    name: ${MERKLE_MAVEN_VOLUME:-merkle-development-maven}
+    labels: *merkle-cache-labels
+  gradle-cache:
+    name: ${MERKLE_GRADLE_VOLUME:-merkle-development-gradle}
+    labels: *merkle-cache-labels
+  go-mod-cache:
+    name: ${MERKLE_GO_MOD_VOLUME:-merkle-development-go-mod}
+    labels: *merkle-cache-labels
+  go-build-cache:
+    name: ${MERKLE_GO_BUILD_VOLUME:-merkle-development-go-build}
+    labels: *merkle-cache-labels
+  pip-cache:
+    name: ${MERKLE_PIP_VOLUME:-merkle-development-pip}
+    labels: *merkle-cache-labels
+

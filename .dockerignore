@@ -1,0 +1,11 @@
+.git
+.merkle
+.agents
+.codex
+artifacts
+coverage
+**/bin
+**/obj
+**/target
+Merkle-Test-Impact-System-Design.docx
+Merkle-Test-Impact-System-Design.pdf

@@ -78,6 +78,31 @@ Run the full suite periodically, such as in a nightly job. Those complete runs s
 - Go is a first-party deep adapter; its canonical language identifier is `golang` and the CLI accepts `go` as an alias.
 - Third-party adapters are capability-negotiated but not guaranteed by the core project.
 
+## Local agent installation
+
+Ask a coding agent:
+
+> Install `github.com/leeozaka/merkle` globally and make it available. Use Merkle for faster development iterations, then run the repository's full suite at the end.
+
+The repository includes a portable skill at [`skills/merkle`](skills/merkle). Its installer builds a local Docker image containing the requested adapter toolchains and exposes it through `~/.local/bin/merkle`. Docker Compose remains behind the wrapper; no public Merkle image or hosted service is required.
+
+Install the skill globally with a compatible Agent Skills client:
+
+```bash
+npx skills add leeozaka/merkle --skill merkle --global --yes
+```
+
+Omit `--global` for a project-local skill installation. Node is needed only by this optional skill-distribution command, not by Merkle's runtime installer.
+
+Manual installation from an official checkout is:
+
+```bash
+./install
+merkle doctor
+```
+
+See [Build and usage](USAGE.md) for version selection, reduced adapter sets, project pins, custom runtime images, mounts, environment forwarding, and removal.
+
 ## CLI
 
 Plan a pull request without running tests:

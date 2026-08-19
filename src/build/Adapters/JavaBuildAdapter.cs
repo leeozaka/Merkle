@@ -46,8 +46,8 @@ internal sealed class JavaBuildAdapter : BuildAdapterBase
         arguments.Add($"-Dproject.build.directory={destination}");
         var build = await TryRunAsync("mvn", arguments, source, null, null, cancellationToken).ConfigureAwait(false);
         if (build is null || build.ExitCode != 0) return Failed(Definition, build is null ? "Maven could not be started." : Diagnostic(build));
-        var jar = Path.Combine(destination, "merkle-adapter-java.jar");
-        if (!File.Exists(jar))
+        var jar = NormalizeJar(destination);
+        if (jar is null)
         {
             return Failed(Definition, "Maven did not produce the expected Java adapter JAR.");
         }
@@ -60,5 +60,17 @@ internal sealed class JavaBuildAdapter : BuildAdapterBase
         }
 
         return await CompleteAsync(Definition, request.Context, [(jar, $"workers/{Definition.Id}/{Path.GetFileName(jar)}", "minimal")], cancellationToken).ConfigureAwait(false);
+    }
+
+    private static string? NormalizeJar(string destination)
+    {
+        var canonical = Path.Combine(destination, "merkle-adapter-java.jar");
+        if (File.Exists(canonical)) return canonical;
+        var candidates = Directory.EnumerateFiles(destination, "*.jar", SearchOption.TopDirectoryOnly)
+            .Where(path => !Path.GetFileName(path).StartsWith("original-", StringComparison.OrdinalIgnoreCase))
+            .ToArray();
+        if (candidates.Length != 1) return null;
+        File.Move(candidates[0], canonical);
+        return canonical;
     }
 }

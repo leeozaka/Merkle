@@ -245,6 +245,39 @@ public sealed class AdapterBuildDefinitionsTests
     }
 
     [Fact]
+    public async Task JavaBuildNormalizesSingleVersionedMavenJarBeforeSmoke()
+    {
+        using var repository = new TemporaryRepository();
+        repository.Write("src/adapters/java/pom.xml", "<project />");
+        var runner = new ScriptedProcessRunner(request =>
+        {
+            if (request.FileName == "mvn")
+            {
+                const string property = "-Dproject.build.directory=";
+                var destination = request.Arguments.Single(argument => argument.StartsWith(property, StringComparison.Ordinal))[property.Length..];
+                Directory.CreateDirectory(destination);
+                File.WriteAllText(Path.Combine(destination, "merkle-adapter-java-1.0.0.jar"), "shaded jar", Encoding.UTF8);
+                File.WriteAllText(Path.Combine(destination, "original-merkle-adapter-java-1.0.0.jar"), "original jar", Encoding.UTF8);
+                return Result("");
+            }
+
+            Assert.Equal("-jar", request.Arguments[0]);
+            Assert.EndsWith("merkle-adapter-java.jar", request.Arguments[1], StringComparison.Ordinal);
+            Assert.True(File.Exists(request.Arguments[1]));
+            return Result("{\"protocolVersion\":\"1.0\",\"language\":\"java\"}\n");
+        });
+        var adapter = new AdapterBuildCatalog(runner).Resolve("java");
+        var readiness = new AdapterReadiness("java", AdapterReadinessStatus.Ready);
+
+        var result = await adapter.BuildAsync(
+            new AdapterBuildRequest(repository.Context, RunTests: false, readiness),
+            CancellationToken.None);
+
+        Assert.Equal(AdapterBuildStatus.Built, result.Status);
+        Assert.Equal("workers/java/merkle-adapter-java.jar", Assert.Single(result.Artifacts).RelativePath);
+    }
+
+    [Fact]
     public async Task PythonBuildReportsSelectedTestFailureBeforePackaging()
     {
         using var repository = new TemporaryRepository();

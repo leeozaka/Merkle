@@ -24,7 +24,7 @@ jobs:
       - uses: actions/setup-go@v6
         with:
           go-version-file: src/adapters/go/worker/go.mod
-      - uses: actions/setup-python@v6
+      - uses: actions/setup-python@v7
         with:
           python-version: '3.12'
       - uses: actions/setup-java@v5
